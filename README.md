@@ -322,6 +322,29 @@ reading, check baud/parity/slave-ID against the generator controller's
 Modbus documentation, and confirm wiring polarity (A/B may need to be
 swapped).
 
+### Releasing a new agent version
+
+To ship an agent update to the fleet: bump `AGENT_VERSION` in
+`packages/agent/genmon_agent.py` and merge to `main`. That's the entire
+manual step -- `.github/workflows/agent-release.yml` then automatically:
+
+1. Syncs the api's `TARGET_AGENT_VERSION` default
+   (`packages/api/app/config.py`) to match, in its own commit.
+2. Publishes a GitHub Release tagged `agent-v<version>` with
+   `genmon_agent.py` and `requirements.txt` attached -- this is what
+   `packages/agent/install.sh`'s `GENMON_AGENT_SOURCE=github` fetch mode
+   downloads, both for fresh installs and for a device's own
+   self-update check.
+3. Triggers an api image rebuild so the freshly-bundled
+   `GET /devices/agent/download` copy and the synced default ship
+   together.
+
+If a deployment overrides `TARGET_AGENT_VERSION` via its own env var
+(recommended for controlling fleet-wide rollout timing rather than
+updating every device the instant a release is tagged), that override is
+unaffected by step 1 -- only the built-in default changes, and you decide
+when to actually bump the env var to roll the update out.
+
 ---
 
 ## Repository layout

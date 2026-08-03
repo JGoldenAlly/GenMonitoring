@@ -1,0 +1,96 @@
+name: Sync agent version & publish release
+
+# Mirrors AetherLynk's sync-agent-version.yml pattern, adapted for
+# GenMonitoring: bump AGENT_VERSION in packages/agent/genmon_agent.py in a
+# normal PR/commit, merge to main, and this workflow does the rest --
+# syncing the api's default target version and publishing a GitHub Release
+# with the agent script attached, which is what packages/agent/install.sh's
+# GENMON_AGENT_SOURCE=github fetch mode (and anyone installing/upgrading a
+# field agent by hand) actually downloads.
+#
+# This does NOT feed the api container's own GET /devices/agent/download --
+# that endpoint serves whatever packages/agent/genmon_agent.py was bundled
+# into the running api image at build time (see packages/api/Dockerfile and
+# .github/workflows/api.yml, which already rebuilds on agent-script
+# changes). The release published here is the independent
+# GitHub-Releases-based distribution path.
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - "packages/agent/genmon_agent.py"
+  workflow_dispatch: {}
+
+concurrency:
+  group: ${{ github.workflow }}
+  cancel-in-progress: false
+
+permissions:
+  contents: write
+  actions: write
+
+jobs:
+  release:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Extract AGENT_VERSION
+        id: version
+        run: |
+          version=$(grep -oP '^AGENT_VERSION = "\K[^"]+' packages/agent/genmon_agent.py)
+          if [ -z "$version" ]; then
+            echo "Could not find AGENT_VERSION in packages/agent/genmon_agent.py" >&2
+            exit 1
+          fi
+          echo "version=$version" >> "$GITHUB_OUTPUT"
+          echo "tag=agent-v$version" >> "$GITHUB_OUTPUT"
+
+      - name: Check whether this version was already released
+        id: check
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          if gh release view "${{ steps.version.outputs.tag }}" >/dev/null 2>&1; then
+            echo "Release ${{ steps.version.outputs.tag }} already exists -- nothing to do."
+            echo "exists=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "exists=false" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Sync TARGET_AGENT_VERSION default in the api's config
+        if: steps.check.outputs.exists == 'false'
+        run: |
+          file=packages/api/app/config.py
+          current=$(grep -oP 'TARGET_AGENT_VERSION: str = "\K[^"]+' "$file" || true)
+          if [ "$current" = "${{ steps.version.outputs.version }}" ]; then
+            echo "config.py already defaults to ${{ steps.version.outputs.version }}, nothing to sync."
+            exit 0
+          fi
+          sed -i "s/TARGET_AGENT_VERSION: str = \".*\"/TARGET_AGENT_VERSION: str = \"${{ steps.version.outputs.version }}\"/" "$file"
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          git add "$file"
+          git commit -m "chore: sync TARGET_AGENT_VERSION default to ${{ steps.version.outputs.version }}" \
+            -m "Only changes the built-in default; a deployment overriding TARGET_AGENT_VERSION via its own env var is unaffected and must be updated deliberately to roll out an agent upgrade fleet-wide."
+          git push origin HEAD:main
+
+      - name: Create release ${{ steps.version.outputs.tag }}
+        if: steps.check.outputs.exists == 'false'
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          gh release create "${{ steps.version.outputs.tag }}" \
+            packages/agent/genmon_agent.py \
+            packages/agent/requirements.txt \
+            --title "Agent v${{ steps.version.outputs.version }}" \
+            --notes "GenMonitoring field agent v${{ steps.version.outputs.version }}. Fetched by packages/agent/install.sh (GENMON_AGENT_SOURCE=github) and by the agent's own self-update mechanism when GENMON_AGENT_SOURCE=github is in use."
+
+      - name: Trigger api image rebuild (picks up the synced default)
+        if: steps.check.outputs.exists == 'false'
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: gh workflow run api.yml --ref main
