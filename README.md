@@ -123,33 +123,42 @@ in `mosquitto.conf` (port 8883) with real certificates, and set `MQTT_TLS=true`
 on both the `api` and `bridge` containers, and on every field agent's
 `device.conf`.
 
-### 2. Build and publish the container images
+### 2. Container images (built automatically by CI)
 
-The Unraid templates expect prebuilt images at
-`ghcr.io/jgoldenally/genmonitoring-{api,bridge,portal}:latest`. Build and
-push them from the repo root:
+`.github/workflows/{api,bridge,portal}.yml` each build and push their
+package's image to `ghcr.io/jgoldenally/genmonitoring-{api,bridge,portal}`
+whenever the relevant `packages/*/**` path changes on `main` (the api
+workflow also fires on changes to `packages/agent/genmon_agent.py`, since
+that file is bundled into the api image -- see below). Every push gets a
+`sha-<short>` tag; pushes to `main` also get `latest`. Pull requests build
+(and validate) the image without pushing. Nothing to run by hand once this
+is merged to `main` -- just wait for the corresponding workflow to go green
+under the repo's **Actions** tab, or trigger one manually with
+**Run workflow**.
 
-```bash
-docker build -f packages/api/Dockerfile -t ghcr.io/jgoldenally/genmonitoring-api:latest .
-docker build -f packages/bridge/Dockerfile -t ghcr.io/jgoldenally/genmonitoring-bridge:latest packages/bridge
-docker build -f packages/portal/Dockerfile -t ghcr.io/jgoldenally/genmonitoring-portal:latest packages/portal
-docker push ghcr.io/jgoldenally/genmonitoring-api:latest
-docker push ghcr.io/jgoldenally/genmonitoring-bridge:latest
-docker push ghcr.io/jgoldenally/genmonitoring-portal:latest
-```
+**One-time setup**: after the first successful run of each workflow, the
+resulting GHCR packages are **private** by default. Go to each package's
+settings (from the repo's sidebar: **Packages** -> `genmonitoring-api` /
+`-bridge` / `-portal` -> **Package settings** -> **Change visibility** ->
+**Public**) so Unraid can pull them without needing registry credentials
+configured on the Unraid host. Alternatively, keep them private and
+configure a registry login in Unraid's Docker settings using a GitHub PAT
+with `read:packages` scope.
 
-Note the **api** image's build context is the repo root (`.`), not
-`packages/api` -- its Dockerfile also bundles
-`packages/agent/genmon_agent.py` so `GET /devices/agent/download` (the field
-agent's self-update source) has something to serve. Keep the bundled agent
-script in sync with whatever `packages/agent/genmon_agent.py` the fleet is
-running when you cut a release.
-
-The **portal** image is built once with a placeholder API URL baked in and
-rewrites it at container start from the `NEXT_PUBLIC_API_URL` env var (see
-`packages/portal/docker-entrypoint.sh`) -- this is what lets the same
-published image work for every Unraid installation's own IP/hostname,
-despite Next.js normally baking `NEXT_PUBLIC_*` values in at build time.
+Notes worth knowing if you ever need to build an image by hand instead
+(e.g. testing a local change before pushing):
+- The **api** image's build context must be the **repo root** (`.`), not
+  `packages/api` -- its Dockerfile also bundles
+  `packages/agent/genmon_agent.py` so `GET /devices/agent/download` (the
+  field agent's self-update source) has something to serve:
+  `docker build -f packages/api/Dockerfile -t <tag> .`
+- The **portal** image is built with a placeholder API URL baked in and
+  rewrites it at container start from the `NEXT_PUBLIC_API_URL` env var
+  (see `packages/portal/docker-entrypoint.sh`) -- this is what lets the
+  same published image work for every Unraid installation's own
+  IP/hostname, despite Next.js normally baking `NEXT_PUBLIC_*` values in at
+  build time. Don't pass a real `--build-arg NEXT_PUBLIC_API_URL=...` when
+  building the shared/published image, or you'll freeze it to one URL.
 
 ### 3. Import the Unraid templates
 
