@@ -123,33 +123,42 @@ in `mosquitto.conf` (port 8883) with real certificates, and set `MQTT_TLS=true`
 on both the `api` and `bridge` containers, and on every field agent's
 `device.conf`.
 
-### 2. Build and publish the container images
+### 2. Container images (built automatically by CI)
 
-The Unraid templates expect prebuilt images at
-`ghcr.io/jgoldenally/genmonitoring-{api,bridge,portal}:latest`. Build and
-push them from the repo root:
+`.github/workflows/{api,bridge,portal}.yml` each build and push their
+package's image to `ghcr.io/jgoldenally/genmonitoring-{api,bridge,portal}`
+whenever the relevant `packages/*/**` path changes on `main` (the api
+workflow also fires on changes to `packages/agent/genmon_agent.py`, since
+that file is bundled into the api image -- see below). Every push gets a
+`sha-<short>` tag; pushes to `main` also get `latest`. Pull requests build
+(and validate) the image without pushing. Nothing to run by hand once this
+is merged to `main` -- just wait for the corresponding workflow to go green
+under the repo's **Actions** tab, or trigger one manually with
+**Run workflow**.
 
-```bash
-docker build -f packages/api/Dockerfile -t ghcr.io/jgoldenally/genmonitoring-api:latest .
-docker build -f packages/bridge/Dockerfile -t ghcr.io/jgoldenally/genmonitoring-bridge:latest packages/bridge
-docker build -f packages/portal/Dockerfile -t ghcr.io/jgoldenally/genmonitoring-portal:latest packages/portal
-docker push ghcr.io/jgoldenally/genmonitoring-api:latest
-docker push ghcr.io/jgoldenally/genmonitoring-bridge:latest
-docker push ghcr.io/jgoldenally/genmonitoring-portal:latest
-```
+**One-time setup**: after the first successful run of each workflow, the
+resulting GHCR packages are **private** by default. Go to each package's
+settings (from the repo's sidebar: **Packages** -> `genmonitoring-api` /
+`-bridge` / `-portal` -> **Package settings** -> **Change visibility** ->
+**Public**) so Unraid can pull them without needing registry credentials
+configured on the Unraid host. Alternatively, keep them private and
+configure a registry login in Unraid's Docker settings using a GitHub PAT
+with `read:packages` scope.
 
-Note the **api** image's build context is the repo root (`.`), not
-`packages/api` -- its Dockerfile also bundles
-`packages/agent/genmon_agent.py` so `GET /devices/agent/download` (the field
-agent's self-update source) has something to serve. Keep the bundled agent
-script in sync with whatever `packages/agent/genmon_agent.py` the fleet is
-running when you cut a release.
-
-The **portal** image is built once with a placeholder API URL baked in and
-rewrites it at container start from the `NEXT_PUBLIC_API_URL` env var (see
-`packages/portal/docker-entrypoint.sh`) -- this is what lets the same
-published image work for every Unraid installation's own IP/hostname,
-despite Next.js normally baking `NEXT_PUBLIC_*` values in at build time.
+Notes worth knowing if you ever need to build an image by hand instead
+(e.g. testing a local change before pushing):
+- The **api** image's build context must be the **repo root** (`.`), not
+  `packages/api` -- its Dockerfile also bundles
+  `packages/agent/genmon_agent.py` so `GET /devices/agent/download` (the
+  field agent's self-update source) has something to serve:
+  `docker build -f packages/api/Dockerfile -t <tag> .`
+- The **portal** image is built with a placeholder API URL baked in and
+  rewrites it at container start from the `NEXT_PUBLIC_API_URL` env var
+  (see `packages/portal/docker-entrypoint.sh`) -- this is what lets the
+  same published image work for every Unraid installation's own
+  IP/hostname, despite Next.js normally baking `NEXT_PUBLIC_*` values in at
+  build time. Don't pass a real `--build-arg NEXT_PUBLIC_API_URL=...` when
+  building the shared/published image, or you'll freeze it to one URL.
 
 ### 3. Import the Unraid templates
 
@@ -312,6 +321,29 @@ should exist post-reboot. If a register configured as RTU transport isn't
 reading, check baud/parity/slave-ID against the generator controller's
 Modbus documentation, and confirm wiring polarity (A/B may need to be
 swapped).
+
+### Releasing a new agent version
+
+To ship an agent update to the fleet: bump `AGENT_VERSION` in
+`packages/agent/genmon_agent.py` and merge to `main`. That's the entire
+manual step -- `.github/workflows/agent-release.yml` then automatically:
+
+1. Syncs the api's `TARGET_AGENT_VERSION` default
+   (`packages/api/app/config.py`) to match, in its own commit.
+2. Publishes a GitHub Release tagged `agent-v<version>` with
+   `genmon_agent.py` and `requirements.txt` attached -- this is what
+   `packages/agent/install.sh`'s `GENMON_AGENT_SOURCE=github` fetch mode
+   downloads, both for fresh installs and for a device's own
+   self-update check.
+3. Triggers an api image rebuild so the freshly-bundled
+   `GET /devices/agent/download` copy and the synced default ship
+   together.
+
+If a deployment overrides `TARGET_AGENT_VERSION` via its own env var
+(recommended for controlling fleet-wide rollout timing rather than
+updating every device the instant a release is tagged), that override is
+unaffected by step 1 -- only the built-in default changes, and you decide
+when to actually bump the env var to roll the update out.
 
 ---
 
