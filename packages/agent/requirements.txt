@@ -1,0 +1,34 @@
+# GenMonitoring Raspberry Pi CM4 field agent -- Python dependencies.
+#
+# Installed into a dedicated venv at /opt/genmon/venv by install.sh.
+# Versions are pinned for reproducible fleet deployments; bump deliberately.
+
+# Modbus RTU/TCP polling (ModbusTcpClient / ModbusSerialClient).
+pymodbus==3.6.9
+
+# pymodbus's serial (RTU) transport depends on pyserial at runtime but does
+# not declare it as a hard dependency (it is an optional "serial" extra) --
+# pinned explicitly here since this agent's RTU driver is not optional on
+# this hardware (onboard RS-485 on /dev/ttyAMA5).
+pyserial==3.5
+
+# MQTT publish/subscribe. Pinned to the 1.x series deliberately: paho-mqtt
+# 2.x changed the default callback API signatures (on_connect/on_disconnect
+# gained new required arguments unless callback_api_version=VERSION1 is
+# passed to the Client constructor). This agent's callbacks use the 1.x
+# signatures directly.
+paho-mqtt==1.6.1
+
+# GPIO control for IN1 (BCM GPIO23) / OUT1 (BCM GPIO6).
+gpiozero==2.0.1
+
+# lgpio pin factory backend for gpiozero -- required so GPIO access goes
+# through /dev/gpiochip* rather than the legacy /dev/mem path. The agent
+# explicitly forces this pin factory (see genmon_agent.py's
+# _configure_lgpio_pin_factory) rather than trusting gpiozero's
+# auto-detection order.
+lgpio==0.2.2.0
+
+# HTTP client for the GenMonitoring API (pre-register/config/heartbeat/
+# scan-results/submit-logs/agent-download).
+requests==2.32.3

@@ -2,7 +2,7 @@ from datetime import datetime
 from typing import Literal
 from uuid import UUID
 
-from pydantic import BaseModel, model_validator
+from pydantic import BaseModel
 
 __all__ = [
     "CommandCreate",
@@ -19,11 +19,11 @@ class CommandCreate(BaseModel):
     reason: str | None = None
     duration_minutes: int | None = None
 
-    @model_validator(mode="after")
-    def _reason_required_for_run(self):
-        if self.command_type == "run" and not (self.reason and self.reason.strip()):
-            raise ValueError("reason is required for run commands")
-        return self
+    # NOTE: `reason` requiredness for command_type == "run" is deliberately
+    # NOT enforced here via a pydantic validator -- the spec calls for a
+    # plain 400 response in that case, and a pydantic ValidationError would
+    # surface as a 422 instead. See the explicit check in
+    # routers/commands.py::create_command.
 
 
 class CommandOut(BaseModel):

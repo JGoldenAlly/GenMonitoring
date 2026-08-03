@@ -243,6 +243,14 @@ export interface CurrentCommandOut {
   io_states: IOStateOut[];
 }
 
+export interface InhibitStatusOut {
+  generator_id: string;
+  control_inhibited: boolean;
+  control_inhibited_reason?: string | null;
+  control_inhibited_by_user_id?: string | null;
+  control_inhibited_at?: string | null;
+}
+
 // --- users ---
 
 export interface UserOut {
@@ -519,7 +527,10 @@ export const unclaimDevice = (deviceKey: string) =>
 // Generators
 // ---------------------------------------------------------------------------
 
-export const listGenerators = () => request<GeneratorOut[]>('/generators');
+export const listGenerators = (params?: { device_id?: string }) =>
+  request<GeneratorOut[]>('/generators', { query: { device_id: params?.device_id } });
+
+export const getGenerator = (id: string) => request<GeneratorOut>(`/generators/${id}`);
 
 export const createGenerator = (payload: GeneratorCreate) =>
   request<GeneratorOut>('/generators', { method: 'POST', body: payload });
@@ -589,10 +600,10 @@ export const cancelCommand = (generatorId: string, commandId: string) =>
   request<CommandOut>(`/generators/${generatorId}/commands/${commandId}/cancel`, { method: 'POST' });
 
 export const setInhibit = (generatorId: string, reason: string) =>
-  request<GeneratorOut>(`/generators/${generatorId}/inhibit`, { method: 'POST', body: { reason } });
+  request<InhibitStatusOut>(`/generators/${generatorId}/inhibit`, { method: 'POST', body: { reason } });
 
 export const clearInhibit = (generatorId: string) =>
-  request<GeneratorOut>(`/generators/${generatorId}/inhibit`, { method: 'DELETE' });
+  request<InhibitStatusOut>(`/generators/${generatorId}/inhibit`, { method: 'DELETE' });
 
 // ---------------------------------------------------------------------------
 // Users

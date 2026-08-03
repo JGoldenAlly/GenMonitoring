@@ -1,0 +1,100 @@
+# GenMonitoring field-agent configuration.
+#
+# Installed by install.sh to /etc/genmon/device.conf on first run (install.sh
+# NEVER overwrites an existing /etc/genmon/device.conf -- it only copies this
+# template in if that file is not already present). The running agent
+# rewrites some of these values itself (see per-section notes below).
+#
+# Owned by root:genmon, mode 0640 -- it contains a bearer token once the
+# device has been claimed.
+
+[device]
+# device_key and cpu_serial are derived automatically on first agent start
+# from /proc/cpuinfo (GM-XXXX-XXXX) and written back here -- leave blank in
+# a fresh install. Do not hand-edit device_key on a device that has already
+# registered with the API; it is the device's permanent identity.
+device_key =
+cpu_serial =
+
+# Base URL of the GenMonitoring API, no trailing slash. Overridable at
+# runtime with the GENMON_API_BASE environment variable (e.g. via
+# /etc/genmon/agent.env, loaded by the systemd unit) without editing this
+# file -- useful for pointing a unit at a staging API temporarily.
+api_base_url = https://api.genmonitoring.example.com
+
+# Kept in sync with the AGENT_VERSION constant in genmon_agent.py by the
+# agent itself on every start; only meaningful as an operational record.
+agent_version = 0.0.0
+
+[auth]
+# Populated automatically by the agent once an operator claims this device
+# in the portal (from GET /devices/{device_key}/config's
+# device_bearer_token). Leave blank on a fresh install.
+device_bearer_token =
+
+[mqtt]
+# Populated automatically from /config's mqtt_host/mqtt_port/mqtt_tls once
+# the device is claimed. The placeholder host below is never actually used
+# to connect -- the agent will not attempt an MQTT connection until "host"
+# is non-empty.
+host =
+port = 8883
+tls = true
+
+# ---------------------------------------------------------------------------
+# [gpio] -- LOCAL-ONLY, SAFETY-CRITICAL. The agent's ConfigStore refuses,
+# unconditionally, to let ANY server response write into this section.
+# Only an operator editing this file directly (and restarting the agent)
+# changes these values. See the module docstring in genmon_agent.py for the
+# full hardware safety rationale before changing pin numbers.
+# ---------------------------------------------------------------------------
+[gpio]
+# BCM GPIO23 -- isolated digital input, wired in parallel with the
+# generator controller's own 2-wire remote-start contact loop. Pulled to
+# ground = closed/active (generator running). Informational only; never
+# drives OUT1.
+in1_pin = 23
+in1_debounce_ms = 50
+
+# BCM GPIO6 -- isolated digital output. Closed/energized commands "run",
+# open commands "stop". Always boots open. The ONLY code paths permitted
+# to change this pin's state are GpioController.handle_start/
+# handle_renew/handle_stop.
+#
+# WARNING: GPIO23 (IN1) can collide with SPI0 chip-select-1 on this board
+# per Waveshare's documentation -- never enable SPI0's dual-chip-select
+# device tree overlay (see install.sh, which enforces this).
+out1_pin = 6
+
+# Default TTL (seconds) suggested to operators for a run command if the
+# backend doesn't otherwise specify one -- NOT actually used to override a
+# server-supplied ttl_seconds value, only as documentation/context.
+session_ttl_seconds = 300
+
+# HARD local ceiling (seconds) that a server-supplied ttl_seconds can never
+# exceed, regardless of what any command requests. This is the core of the
+# local deadman failsafe: if this box's clock and this file are all an
+# operator has, the generator will still stop itself within this many
+# seconds of the last renewal if the backend goes dark.
+session_ttl_max_seconds = 1800
+
+[network]
+# How often (seconds) to poll GET /devices/{device_key}/config. The server
+# may adjust this going forward (via /config's own
+# config_refresh_interval_seconds field), and the agent persists that back
+# here -- this is just the value used before the first successful poll.
+config_refresh_interval_seconds = 60
+
+# How often (seconds) to POST /devices/{device_key}/heartbeat. This is
+# LOCAL-ONLY -- unlike config_refresh_interval_seconds, the /config
+# response has no field for this and the agent never overwrites it.
+heartbeat_interval_seconds = 60
+
+[cellular]
+# APN for the M.2 SIMCom SIM7600G-H-M.2 modem's Verizon SIM, provisioned
+# manually per-SIM (no automated carrier API). Leave blank on Ethernet-only
+# units -- the agent detects modem absence and skips cellular bring-up
+# entirely without error. Example Verizon private/business APNs vary by
+# account; consult your Verizon IoT/M2M provisioning paperwork for the
+# exact value assigned to this SIM.
+apn =

@@ -123,7 +123,9 @@ async def get_device_by_bearer_token(
         raise HTTPException(status_code=401, detail="Missing device bearer token")
 
     result = await db.execute(
-        select(Device).where(Device.device_bearer_token == token, Device.claimed.is_(True))
+        select(Device)
+        .options(selectinload(Device.generators))
+        .where(Device.device_bearer_token == token, Device.claimed.is_(True))
     )
     device = result.scalar_one_or_none()
     if device is None:

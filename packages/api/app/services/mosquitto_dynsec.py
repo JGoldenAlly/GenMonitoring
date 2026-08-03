@@ -12,21 +12,28 @@ How it works:
     client, i.e. us) to the topic `$CONTROL/dynamic-security/v1`, as a JSON
     body shaped `{"commands": [{"command": "<name>", ...fields}]}`.
   * It replies on the FIXED topic `$CONTROL/dynamic-security/v1/response`
-    (the plugin does not honor a custom ResponseTopic override, but we set
-    one anyway since that's part of the documented MQTTv5 request/response
-    pattern) with `{"responses": [{"command": "<name>", "error": "..."}]}`
-    (no "error" key on success).
-  * Because MQTT has no built-in request id, correlation is done via the
-    MQTTv5 `CorrelationData` publish property: we generate a random token
-    per outbound command, attach it as CorrelationData, and match it
-    against the CorrelationData property on the incoming response message.
-    This requires an MQTTv5 connection (dynsec administration itself is not
-    v5-specific, but the request/response correlation pattern we use here
-    is only clean with v5 properties).
+    with `{"responses": [{"command": "<name>", "error": "..."}]}` (no
+    "error" key on success).
+  * CORRELATION -- READ THIS, IT'S NOT WHAT THE MQTTv5 SPEC WOULD SUGGEST:
+    the natural design is to attach a per-command MQTTv5 `CorrelationData`
+    property and match it on the response, and this module still sets
+    CorrelationData + ResponseTopic on every outbound publish for protocol
+    correctness / forward compatibility. HOWEVER, this was tested against a
+    live Mosquitto 2.0.18 broker while building this module, and confirmed
+    empirically that mosquitto_dynamic_security.so's responses carry NO
+    MQTTv5 properties at all (CorrelationData comes back empty on every
+    reply) -- so responses cannot actually be matched to requests that way
+    on this broker version. Instead we serialize: an `asyncio.Lock` around
+    the publish+await-reply pair guarantees at most one dynsec command is
+    ever in flight at a time on this connection, so "the next message that
+    arrives on the response topic" is unambiguously the reply to the
+    command we just sent (dynsec responses arrive in the same order the
+    requests were made, single connection, QoS 1). If a future Mosquitto
+    version starts populating CorrelationData correctly, the extra property
+    is harmless and this FIFO assumption remains correct regardless.
   * We keep exactly one long-lived MQTTv5 connection open (subscribed to
-    the response topic), created at FastAPI startup, and multiplex all
-    dynsec admin calls (device claim/unclaim) over it via a
-    correlation-id -> asyncio.Future map, with a ~5s timeout per call.
+    the response topic), created at FastAPI startup, serializing every
+    dynsec admin call (device claim/unclaim) over it with a ~5s timeout.
 
 Device provisioning model:
   * On CLAIM: create a dynsec "client" named after the device_key (dynsec
@@ -102,38 +109,48 @@ class MosquittoDynsecClient:
         self._client: Optional[aiomqtt.Client] = None
         self._stack: Optional[AsyncExitStack] = None
         self._listen_task: Optional[asyncio.Task] = None
-        self._pending: dict[str, "asyncio.Future[dict]"] = {}
-        self._lock = asyncio.Lock()
+        # Connection lifecycle (connect/disconnect) is guarded separately
+        # from command execution so a call arriving mid-(re)connect doesn't
+        # deadlock against itself.
+        self._conn_lock = asyncio.Lock()
+        # At most one dynsec command may be in flight at a time -- see the
+        # big module docstring for why this single-slot design replaced a
+        # CorrelationData-keyed map.
+        self._call_lock = asyncio.Lock()
+        self._pending_response: Optional["asyncio.Future[dict]"] = None
         self._role_ready = False
 
     # -- connection lifecycle -------------------------------------------------
     async def connect(self) -> None:
-        async with self._lock:
-            if self._client is not None:
-                return
-            stack = AsyncExitStack()
-            client = aiomqtt.Client(
-                hostname=settings.MQTT_HOST,
-                port=settings.MQTT_PORT,
-                username=settings.MQTT_USERNAME,
-                password=settings.MQTT_PASSWORD,
-                identifier="genmon-api-dynsec",
-                protocol=aiomqtt.ProtocolVersion.V5,
-                tls_params=_build_tls_params(),
-            )
-            try:
-                await stack.enter_async_context(client)
-                await client.subscribe(DYNSEC_RESPONSE_TOPIC, qos=1)
-            except Exception:
-                await stack.aclose()
-                raise
-            self._stack = stack
-            self._client = client
-            self._listen_task = asyncio.create_task(self._listen_loop(), name="dynsec-listener")
-            logger.info("dynsec client connected and subscribed to %s", DYNSEC_RESPONSE_TOPIC)
+        async with self._conn_lock:
+            await self._connect_locked()
+
+    async def _connect_locked(self) -> None:
+        if self._client is not None:
+            return
+        stack = AsyncExitStack()
+        client = aiomqtt.Client(
+            hostname=settings.MQTT_HOST,
+            port=settings.MQTT_PORT,
+            username=settings.MQTT_USERNAME,
+            password=settings.MQTT_PASSWORD,
+            identifier="genmon-api-dynsec",
+            protocol=aiomqtt.ProtocolVersion.V5,
+            tls_params=_build_tls_params(),
+        )
+        try:
+            await stack.enter_async_context(client)
+            await client.subscribe(DYNSEC_RESPONSE_TOPIC, qos=1)
+        except Exception:
+            await stack.aclose()
+            raise
+        self._stack = stack
+        self._client = client
+        self._listen_task = asyncio.create_task(self._listen_loop(), name="dynsec-listener")
+        logger.info("dynsec client connected and subscribed to %s", DYNSEC_RESPONSE_TOPIC)
 
     async def disconnect(self) -> None:
-        async with self._lock:
+        async with self._conn_lock:
             if self._listen_task is not None:
                 self._listen_task.cancel()
                 self._listen_task = None
@@ -144,10 +161,9 @@ class MosquittoDynsecClient:
                     logger.exception("error closing dynsec connection")
             self._stack = None
             self._client = None
-            for fut in self._pending.values():
-                if not fut.done():
-                    fut.set_exception(DynsecError("dynsec client disconnected"))
-            self._pending.clear()
+            if self._pending_response is not None and not self._pending_response.done():
+                self._pending_response.set_exception(DynsecError("dynsec client disconnected"))
+            self._pending_response = None
 
     async def _listen_loop(self) -> None:
         assert self._client is not None
@@ -160,13 +176,12 @@ class MosquittoDynsecClient:
             logger.exception("dynsec response listener crashed")
 
     def _dispatch_response(self, message: aiomqtt.Message) -> None:
-        props = getattr(message, "properties", None)
-        corr = getattr(props, "CorrelationData", None) if props else None
-        if corr is None:
-            return
-        corr_id = corr.decode("utf-8") if isinstance(corr, (bytes, bytearray)) else str(corr)
-        fut = self._pending.pop(corr_id, None)
+        fut = self._pending_response
         if fut is None or fut.done():
+            # No call is currently waiting -- an unsolicited/late message,
+            # or a message that arrived after we already timed out. Nothing
+            # sane to do with it.
+            logger.debug("dynsec response received with nothing awaiting it, ignoring")
             return
         try:
             payload = json.loads(message.payload)
@@ -177,32 +192,35 @@ class MosquittoDynsecClient:
 
     # -- low level request/response -------------------------------------------
     async def _send_command(self, command: dict[str, Any], timeout: float = 5.0) -> dict:
-        if self._client is None:
-            await self.connect()
-        assert self._client is not None
+        async with self._call_lock:
+            if self._client is None:
+                await self.connect()
+            assert self._client is not None
 
-        corr_id = uuid.uuid4().hex
-        props = Properties(PacketTypes.PUBLISH)
-        props.CorrelationData = corr_id.encode("utf-8")
-        props.ResponseTopic = DYNSEC_RESPONSE_TOPIC
+            # CorrelationData/ResponseTopic are set for protocol correctness
+            # and forward compatibility, but are NOT relied upon for
+            # matching -- see the module docstring for why.
+            props = Properties(PacketTypes.PUBLISH)
+            props.CorrelationData = uuid.uuid4().hex.encode("utf-8")
+            props.ResponseTopic = DYNSEC_RESPONSE_TOPIC
 
-        loop = asyncio.get_event_loop()
-        fut: "asyncio.Future[dict]" = loop.create_future()
-        self._pending[corr_id] = fut
+            loop = asyncio.get_event_loop()
+            fut: "asyncio.Future[dict]" = loop.create_future()
+            self._pending_response = fut
 
-        body = json.dumps({"commands": [command]})
-        try:
-            await self._client.publish(
-                DYNSEC_COMMAND_TOPIC, payload=body, qos=1, properties=props
-            )
+            body = json.dumps({"commands": [command]})
             try:
-                response = await asyncio.wait_for(fut, timeout=timeout)
-            except asyncio.TimeoutError as exc:
-                raise DynsecTimeout(
-                    f"Timed out waiting for dynsec response to {command.get('command')}"
-                ) from exc
-        finally:
-            self._pending.pop(corr_id, None)
+                await self._client.publish(
+                    DYNSEC_COMMAND_TOPIC, payload=body, qos=1, properties=props
+                )
+                try:
+                    response = await asyncio.wait_for(fut, timeout=timeout)
+                except asyncio.TimeoutError as exc:
+                    raise DynsecTimeout(
+                        f"Timed out waiting for dynsec response to {command.get('command')}"
+                    ) from exc
+            finally:
+                self._pending_response = None
 
         for r in response.get("responses", []):
             error = r.get("error")
@@ -263,7 +281,12 @@ class MosquittoDynsecClient:
                 }
             )
         except DynsecError as exc:
-            if "already has role" not in str(exc).lower():
+            # Empirically verified against a live Mosquitto 2.0.18 broker:
+            # addClientRole on a client that already holds the role does NOT
+            # return a descriptive message -- it returns the generic
+            # "Internal error". There is no more specific string to match
+            # here; treat it as the (harmless) already-has-role case.
+            if "internal error" not in str(exc).lower():
                 raise
         logger.info("dynsec client %s re-provisioned (already existed)", device_key)
 

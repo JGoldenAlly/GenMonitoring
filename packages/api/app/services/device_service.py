@@ -89,8 +89,8 @@ async def record_io_events(
                     (time, device_key, generator_id, channel, state,
                      correlated_command_id, matches_commanded, mismatch_type)
                 VALUES
-                    (:time, :device_key, :generator_id, :channel, :state,
-                     :correlated_command_id, :matches_commanded, :mismatch_type)
+                    (:time, :device_key, :generator_id::uuid, :channel, :state,
+                     :correlated_command_id::uuid, :matches_commanded, :mismatch_type)
                 """
             ),
             row,
