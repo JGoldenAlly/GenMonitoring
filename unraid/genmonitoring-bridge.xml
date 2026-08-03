@@ -1,0 +1,24 @@
+<?xml version="1.0"?>
+<Container version="2">
+  <Name>genmonitoring-bridge</Name>
+  <Repository>ghcr.io/jgoldenally/genmonitoring-bridge:latest</Repository>
+  <Registry>https://ghcr.io</Registry>
+  <Network>bridge</Network>
+  <Shell>sh</Shell>
+  <Privileged>false</Privileged>
+  <Support>https://github.com/jgoldenally/genmonitoring/issues</Support>
+  <Overview>GenMonitoring Bridge -- internal worker only, no web UI. Subscribes to Mosquitto for field-device telemetry, GPIO IN1/OUT1 state, and command acknowledgements, and writes them into Postgres/TimescaleDB. Requires the same database as genmonitoring-api and a reachable Mosquitto broker.</Overview>
+  <Category>Tools:</Category>
+  <WebUI></WebUI>
+  <Icon>https://raw.githubusercontent.com/jgoldenally/genmonitoring/main/assets/icon.png</Icon>
+  <ExtraParams>--restart=unless-stopped</ExtraParams>
+  <DateInstalled></DateInstalled>
+  <DonateLink></DonateLink>
+  <Config Type="Variable" Name="DATABASE_URL" Target="DATABASE_URL" Default="postgresql+asyncpg://genmon:genmon@postgres:5432/genmonitoring" Mode="" Description="Postgres/TimescaleDB connection string" Display="always" Required="true" Mask="true">postgresql+asyncpg://genmon:genmon@postgres:5432/genmonitoring</Config>
+  <Config Type="Variable" Name="MQTT_HOST" Target="MQTT_HOST" Default="" Mode="" Description="Mosquitto broker hostname/IP" Display="always" Required="true" Mask="false"></Config>
+  <Config Type="Variable" Name="MQTT_PORT" Target="MQTT_PORT" Default="8883" Mode="" Description="Mosquitto broker port" Display="always" Required="true" Mask="false">8883</Config>
+  <Config Type="Variable" Name="MQTT_TLS" Target="MQTT_TLS" Default="true" Mode="" Description="Use TLS for the broker connection" Display="advanced" Required="false" Mask="false">true</Config>
+  <Config Type="Variable" Name="MQTT_USERNAME" Target="MQTT_USERNAME" Default="genmon-bridge" Mode="" Description="Restricted, subscribe-only MQTT account (see mosquitto/bootstrap-dynsec.sh)" Display="always" Required="true" Mask="false">genmon-bridge</Config>
+  <Config Type="Variable" Name="MQTT_PASSWORD" Target="MQTT_PASSWORD" Default="" Mode="" Description="Password for MQTT_USERNAME" Display="always" Required="true" Mask="true"></Config>
+  <Config Type="Variable" Name="MQTT_TOPIC_PREFIX" Target="MQTT_TOPIC_PREFIX" Default="genmon" Mode="" Description="MQTT topic prefix" Display="advanced" Required="false" Mask="false">genmon</Config>
+</Container>

@@ -1,0 +1,19 @@
+<?xml version="1.0"?>
+<Container version="2">
+  <Name>genmonitoring-portal</Name>
+  <Repository>ghcr.io/jgoldenally/genmonitoring-portal:latest</Repository>
+  <Registry>https://ghcr.io</Registry>
+  <Network>bridge</Network>
+  <Shell>sh</Shell>
+  <Privileged>false</Privileged>
+  <Support>https://github.com/jgoldenally/genmonitoring/issues</Support>
+  <Overview>GenMonitoring Portal -- Next.js web UI for the Ally Energy generator monitoring platform. Claim/manage field devices, configure generators and Modbus templates, view live telemetry, and issue start/stop commands. Requires genmonitoring-api to be reachable from your browser.</Overview>
+  <Category>Tools:</Category>
+  <WebUI>http://[IP]:[PORT:3000]/</WebUI>
+  <Icon>https://raw.githubusercontent.com/jgoldenally/genmonitoring/main/assets/icon.png</Icon>
+  <ExtraParams>--restart=unless-stopped</ExtraParams>
+  <DateInstalled></DateInstalled>
+  <DonateLink></DonateLink>
+  <Config Type="Port" Name="Portal Port" Target="3000" Default="3000" Mode="tcp" Description="Web UI">3000</Config>
+  <Config Type="Variable" Name="NEXT_PUBLIC_API_URL" Target="NEXT_PUBLIC_API_URL" Default="" Mode="" Description="Browser-reachable URL of genmonitoring-api (e.g. http://your-unraid-ip:8000)" Display="always" Required="true" Mask="false"></Config>
+</Container>
