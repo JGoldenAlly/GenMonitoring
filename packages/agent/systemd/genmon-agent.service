@@ -1,0 +1,51 @@
+[Unit]
+Description=GenMonitoring field agent (generator monitoring/control)
+Documentation=https://github.com/jgoldenally/genmonitoring
+# ModemManager.service is listed even though it's optional at the OS level
+# (units without a modem simply never see it activate) -- when it exists,
+# we want cellular bring-up attempted only after it's up.
+After=network-online.target ModemManager.service
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=genmon
+# Deliberately NOT setting NoNewPrivileges=true: this agent invokes `sudo -n`
+# for a narrow, explicit set of nmcli/hostnamectl subcommands (see
+# /etc/sudoers.d/genmon, installed by install.sh) to manage the cellular
+# GSM profile and route-metric prioritization. NoNewPrivileges would block
+# sudo's setuid escalation entirely and silently break that functionality.
+SupplementaryGroups=gpio dialout
+
+# CAP_NET_ADMIN: required for the route-metric/interface-prioritization
+#   probes and to allow the sudoers-gated nmcli calls to actually take
+#   effect end-to-end.
+# CAP_NET_RAW: required for SO_BINDTODEVICE reachability probes used by
+#   NetworkManagerHelper.probe_reachable().
+AmbientCapabilities=CAP_NET_ADMIN CAP_NET_RAW
+CapabilityBoundingSet=CAP_NET_ADMIN CAP_NET_RAW
+
+WorkingDirectory=/opt/genmon
+ExecStart=/opt/genmon/venv/bin/python3 /opt/genmon/genmon_agent.py --config /etc/genmon/device.conf
+
+# Optional environment overrides (GENMON_API_BASE, MQTT_TLS,
+# GENMON_CONFIG_PATH) without editing this unit file. The leading '-' means
+# a missing file is not an error.
+EnvironmentFile=-/etc/genmon/agent.env
+Environment=PYTHONUNBUFFERED=1
+
+Restart=always
+RestartSec=10
+
+# journald logging (systemd's default for a simple unit with no
+# StandardOutput/StandardError override, made explicit here).
+StandardOutput=journal
+StandardError=journal
+SyslogIdentifier=genmon-agent
+
+# Give the agent a moment to run its shutdown handler (force OUT1 open,
+# close GPIO handles, disconnect MQTT cleanly) before SIGKILL.
+TimeoutStopSec=15
+
+[Install]
+WantedBy=multi-user.target

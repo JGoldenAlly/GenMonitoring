@@ -1,0 +1,87 @@
+services:
+  postgres:
+    image: timescale/timescaledb:latest-pg16
+    restart: unless-stopped
+    environment:
+      POSTGRES_DB: genmonitoring
+      POSTGRES_USER: genmon
+      POSTGRES_PASSWORD: genmon
+    volumes:
+      - genmon-postgres-data:/var/lib/postgresql/data
+    ports:
+      - "5432:5432"
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U genmon -d genmonitoring"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+
+  mosquitto:
+    image: eclipse-mosquitto:2
+    restart: unless-stopped
+    volumes:
+      - ./mosquitto/config:/mosquitto/config
+      - genmon-mosquitto-data:/mosquitto/data
+    ports:
+      - "1883:1883"
+      # - "8883:8883"   # enable once TLS certs are configured, see mosquitto.conf
+
+  api:
+    build:
+      context: .
+      dockerfile: packages/api/Dockerfile
+    restart: unless-stopped
+    depends_on:
+      postgres:
+        condition: service_healthy
+      mosquitto:
+        condition: service_started
+    environment:
+      DATABASE_URL: postgresql+asyncpg://genmon:genmon@postgres:5432/genmonitoring
+      JWT_SECRET: dev-secret-change-in-production
+      JWT_ALGORITHM: HS256
+      JWT_ACCESS_TOKEN_EXPIRE_MINUTES: "30"
+      JWT_REFRESH_TOKEN_EXPIRE_DAYS: "30"
+      MQTT_HOST: mosquitto
+      MQTT_PORT: "1883"
+      MQTT_TLS: "false"
+      MQTT_USERNAME: ${MQTT_API_USERNAME:-genmon-api}
+      MQTT_PASSWORD: ${MQTT_API_PASSWORD:-changeme}
+      CORS_ORIGINS: http://localhost:3000
+      PORT: "8000"
+      AGENT_SCRIPT_PATH: /app/agent/genmon_agent.py
+    ports:
+      - "8000:8000"
+
+  bridge:
+    build:
+      context: ./packages/bridge
+    restart: unless-stopped
+    depends_on:
+      postgres:
+        condition: service_healthy
+      mosquitto:
+        condition: service_started
+    environment:
+      DATABASE_URL: postgresql+asyncpg://genmon:genmon@postgres:5432/genmonitoring
+      MQTT_HOST: mosquitto
+      MQTT_PORT: "1883"
+      MQTT_TLS: "false"
+      MQTT_USERNAME: ${MQTT_BRIDGE_USERNAME:-genmon-bridge}
+      MQTT_PASSWORD: ${MQTT_BRIDGE_PASSWORD:-changeme}
+      MQTT_TOPIC_PREFIX: genmon
+
+  portal:
+    build:
+      context: ./packages/portal
+    restart: unless-stopped
+    depends_on:
+      - api
+    environment:
+      NEXT_PUBLIC_API_URL: http://localhost:8000
+    ports:
+      - "3000:3000"
+
+volumes:
+  genmon-postgres-data:
+  genmon-mosquitto-data:
