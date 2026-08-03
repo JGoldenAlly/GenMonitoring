@@ -203,7 +203,7 @@ async def get_current_command(
             SELECT DISTINCT ON (channel)
                 channel, state, time, matches_commanded, mismatch_type
             FROM generator_io_events
-            WHERE generator_id = :generator_id::uuid
+            WHERE generator_id = CAST(:generator_id AS uuid)
             ORDER BY channel, time DESC
             """
         ),

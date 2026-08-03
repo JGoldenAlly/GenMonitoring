@@ -46,6 +46,7 @@ async def lifespan(app: FastAPI):
     try:
         await dynsec_client.connect()
         await dynsec_client.ensure_device_role()
+        await dynsec_client.ensure_admin_publish_role()
     except Exception:  # noqa: BLE001
         logger.exception(
             "could not connect to mosquitto dynamic-security plugin at startup -- device "

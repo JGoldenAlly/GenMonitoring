@@ -58,7 +58,7 @@ async def get_readings(
     query = """
         SELECT time, device_key, register_address, register_type, register_friendly_name, value, unit
         FROM readings
-        WHERE device_key = :device_key AND register_address = ANY(:addresses::integer[])
+        WHERE device_key = :device_key AND register_address = ANY(CAST(:addresses AS integer[]))
     """
     params: dict = {"device_key": device_key, "addresses": addresses}
     if since is not None:
@@ -88,7 +88,7 @@ async def get_latest_readings(
         SELECT DISTINCT ON (register_address)
             register_address, register_type, register_friendly_name, value, unit, time
         FROM readings
-        WHERE device_key = :device_key AND register_address = ANY(:addresses::integer[])
+        WHERE device_key = :device_key AND register_address = ANY(CAST(:addresses AS integer[]))
         ORDER BY register_address, time DESC
     """
     result = await db.execute(text(query), {"device_key": device_key, "addresses": addresses})

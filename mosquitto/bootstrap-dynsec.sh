@@ -3,18 +3,37 @@
 #
 # Generates mosquitto/config/dynamic-security.json with:
 #   1. An admin account (used by the "api" service as MQTT_USERNAME/
-#      MQTT_PASSWORD -- it needs admin rights to create/delete per-device
-#      credentials at claim/unclaim time and to publish start/stop commands).
+#      MQTT_PASSWORD). The api self-provisions everything else it needs on
+#      top of this account at startup -- see
+#      packages/api/app/services/mosquitto_dynsec.py -- including its own
+#      "genmon-device" shared device role and its own "genmon-api-publisher"
+#      publish grant. This script does NOT duplicate that.
 #   2. A restricted "genmon-bridge" account that can only subscribe to the
-#      telemetry/io/ack topic filters the bridge actually needs.
+#      telemetry/io/ack topic filters the bridge actually needs (the bridge
+#      isn't part of the api's self-provisioning, so it's set up here).
 #
 # Run this ONCE before `docker compose up` for the first time, and again
 # any time you delete mosquitto/config/dynamic-security.json to start over.
 #
-# NOTE: mosquitto_ctrl's exact command names/flags can shift between
-# Mosquitto releases. Verify these against `mosquitto_ctrl dynamic-security
-# help` for the image tag you're actually running before relying on this in
-# production -- treat this script as a strong starting point, not gospel.
+# ============================================================================
+# IMPORTANT, verified against a live Mosquitto 2.0.18 broker while building
+# packages/api's dynsec client:
+#   * The CLI subcommand is `mosquitto_ctrl dynsec ...`, NOT
+#     `mosquitto_ctrl dynamic-security ...` (older docs/examples use the
+#     latter name -- it does not work against current mosquitto-clients).
+#   * ACL entries for any topic containing a wildcard (`+`/`#`) OR a `%c`/`%u`
+#     substitution must use the "Pattern" acltype (`subscribePattern`), not
+#     "Literal" (`subscribeLiteral`) -- Literal is for a topic that is
+#     already a fully concrete string with no wildcard/substitution involved.
+#   * Mosquitto's %c/%u substitution in dynsec ACLs is broken before 2.1.0
+#     (see eclipse-mosquitto/mosquitto#2222) -- the broker MUST be >= 2.1.0
+#     or per-device claim/unclaim and the retained cmd channel will silently
+#     fail. The floating `eclipse-mosquitto:2` tag used in docker-compose.yml
+#     is fine today (2.1+ has long since shipped) but pin an explicit
+#     `eclipse-mosquitto:2.x.y` tag in production so a future re-pull can't
+#     silently regress this. If in doubt, check `mosquitto -v`'s reported
+#     version on the running container.
+# ============================================================================
 #
 # Usage:
 #   ./bootstrap-dynsec.sh <api-admin-password> <bridge-password>
@@ -40,7 +59,7 @@ fi
 
 echo "==> Generating initial dynamic-security.json (admin user: $API_ADMIN_USER)"
 docker run --rm -v "$CONFIG_DIR:/mosquitto/config" "$IMAGE" \
-  mosquitto_ctrl dynamic-security init /mosquitto/config/dynamic-security.json "$API_ADMIN_USER" "$API_ADMIN_PASSWORD"
+  mosquitto_ctrl dynsec init /mosquitto/config/dynamic-security.json "$API_ADMIN_USER" "$API_ADMIN_PASSWORD"
 
 echo "==> Starting a temporary Mosquitto instance to provision the bridge account"
 docker network inspect "$NETWORK" >/dev/null 2>&1 || docker network create "$NETWORK"
@@ -55,14 +74,14 @@ sleep 2
 
 ctrl() {
   docker run --rm --network "$NETWORK" "$IMAGE" \
-    mosquitto_ctrl -h "$CID" -p 1883 -u "$API_ADMIN_USER" -P "$API_ADMIN_PASSWORD" dynamic-security "$@"
+    mosquitto_ctrl -h "$CID" -p 1883 -u "$API_ADMIN_USER" -P "$API_ADMIN_PASSWORD" dynsec "$@"
 }
 
 echo "==> Creating restricted 'genmon-bridge-role' (subscribe-only on telemetry/io/ack topics)"
 ctrl createRole genmon-bridge-role
-ctrl addRoleACL genmon-bridge-role subscribeLiteral "genmon/+/data" allow
-ctrl addRoleACL genmon-bridge-role subscribeLiteral "genmon/+/io" allow
-ctrl addRoleACL genmon-bridge-role subscribeLiteral "genmon/+/cmd/ack" allow
+ctrl addRoleACL genmon-bridge-role subscribePattern "genmon/+/data" allow
+ctrl addRoleACL genmon-bridge-role subscribePattern "genmon/+/io" allow
+ctrl addRoleACL genmon-bridge-role subscribePattern "genmon/+/cmd/ack" allow
 ctrl addRoleACL genmon-bridge-role publishClientReceive "genmon/+/data" allow
 ctrl addRoleACL genmon-bridge-role publishClientReceive "genmon/+/io" allow
 ctrl addRoleACL genmon-bridge-role publishClientReceive "genmon/+/cmd/ack" allow
@@ -70,14 +89,6 @@ ctrl addRoleACL genmon-bridge-role publishClientReceive "genmon/+/cmd/ack" allow
 echo "==> Creating '$BRIDGE_USER' client and assigning the role"
 ctrl createClient "$BRIDGE_USER" -p "$BRIDGE_PASSWORD"
 ctrl addClientRole "$BRIDGE_USER" genmon-bridge-role
-
-echo "==> Creating shared 'genmon-device-role' (per-device pub/sub scoped via %c substitution)"
-ctrl createRole genmon-device-role
-ctrl addRoleACL genmon-device-role publishClientSend "genmon/%c/data" allow
-ctrl addRoleACL genmon-device-role publishClientSend "genmon/%c/io" allow
-ctrl addRoleACL genmon-device-role publishClientSend "genmon/%c/cmd/ack" allow
-ctrl addRoleACL genmon-device-role subscribeLiteral "genmon/%c/cmd" allow
-ctrl addRoleACL genmon-device-role publishClientReceive "genmon/%c/cmd" allow
 
 docker stop "$CID" >/dev/null 2>&1 || true
 trap - EXIT
@@ -94,8 +105,9 @@ cat <<EOF
     MQTT_USERNAME=$BRIDGE_USER
     MQTT_PASSWORD=$BRIDGE_PASSWORD
 
-The api's mosquitto_dynsec service uses the admin account above to create a
-per-device client + assign it to "genmon-device-role" at claim time, and to
-delete the client at unclaim time. It never touches dynamic-security.json
-directly -- everything goes over MQTT control messages.
+The api self-provisions its own "genmon-device" shared role (used for
+per-device clients created/deleted at claim/unclaim time) and its own
+"genmon-api-publisher" publish grant the first time it starts up against
+this broker -- you don't need to create either here. It never touches
+dynamic-security.json directly, only MQTT control messages.
 EOF

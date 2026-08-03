@@ -56,6 +56,28 @@ Device provisioning model:
     the device.
   * On UNCLAIM: delete the dynsec client. The shared role is left in place
     (other devices still use it).
+
+============================================================================
+CRITICAL VERSION REQUIREMENT -- VERIFIED AGAINST A LIVE BROKER, PLEASE READ:
+============================================================================
+The %c/%u substitution this module relies on for the shared per-device role
+DOES NOT WORK on Mosquitto 2.0.x. This was empirically confirmed while
+building this module: against a real Mosquitto 2.0.18 broker, a role ACL of
+`subscribePattern allow genmon/%c/cmd` reliably DENIES the subscribe (SUBACK
+128) for a client whose id/username is genmon/<device_key>/cmd's actual
+%c value -- the same ACL entry works immediately once the topic is given
+already-substituted/literal (e.g. `genmon/GM-1A2B-3C4D/cmd`). This matches
+a known upstream defect, eclipse-mosquitto/mosquitto#2222 ("%c and %u not
+working with the dynamic security plugin"), fixed for the 2.1 milestone.
+==> The broker MUST be Mosquitto >= 2.1.0 for device claim/unclaim and the
+    retained cmd channel to work at all. `docker-compose.yml`'s floating
+    `eclipse-mosquitto:2` tag is fine *today* (2.1+ has long since shipped),
+    but pin an explicit `eclipse-mosquitto:2.x.y` tag in production so a
+    future re-pull can't silently regress this if a `2.0`-tagged image ever
+    resurfaces in some other registry/mirror. If you ever see devices fail
+    to receive their retained `cmd` message despite a device role that
+    looks correct via `getRole`, check `mosquitto -v`'s reported version
+    first, before assuming the ACLs or this code are wrong.
 """
 import asyncio
 import json
@@ -82,6 +104,22 @@ _DEVICE_ROLE_ACLS = [
     {"acltype": "publishClientSend", "topic": "genmon/%c/cmd/ack", "priority": 0, "allow": True},
     {"acltype": "subscribePattern", "topic": "genmon/%c/cmd", "priority": 0, "allow": True},
     {"acltype": "publishClientReceive", "topic": "genmon/%c/cmd", "priority": 0, "allow": True},
+]
+
+# The MQTT_USERNAME/MQTT_PASSWORD account is created as a dynsec ADMIN
+# client (e.g. via `mosquitto_ctrl dynsec init`), which grants it rights on
+# $CONTROL/# only -- zero rights on ordinary topics. This api process also
+# publishes ordinary `genmon/{device_key}/cmd` messages as itself (see
+# services/mqtt_publisher.py), so it needs its own publish grant too.
+# Verified against a live broker while building this: an admin account
+# with no such role gets PUBACK success on every publish regardless (MQTT
+# publish ACL denials are silent, no error surfaces to the publisher) but
+# the message is NOT actually stored/delivered -- so without this role,
+# every start/stop/renew command would silently vanish. We provision it
+# ourselves at startup instead of depending on an external bootstrap script.
+ADMIN_PUBLISH_ROLE_NAME = "genmon-api-publisher"
+_ADMIN_PUBLISH_ROLE_ACLS = [
+    {"acltype": "publishClientSend", "topic": "genmon/+/cmd", "priority": 0, "allow": True},
 ]
 
 
@@ -119,6 +157,7 @@ class MosquittoDynsecClient:
         self._call_lock = asyncio.Lock()
         self._pending_response: Optional["asyncio.Future[dict]"] = None
         self._role_ready = False
+        self._admin_publish_role_ready = False
 
     # -- connection lifecycle -------------------------------------------------
     async def connect(self) -> None:
@@ -172,8 +211,33 @@ class MosquittoDynsecClient:
                 self._dispatch_response(message)
         except asyncio.CancelledError:
             raise
-        except Exception:  # pragma: no cover
-            logger.exception("dynsec response listener crashed")
+        except Exception as exc:  # pragma: no cover - network/broker dependent
+            # IMPORTANT, verified against a live broker: Mosquitto's dynsec
+            # plugin forcibly disconnects a username's currently-connected
+            # sessions whenever that SAME username's own roles are modified
+            # (e.g. our own ensure_admin_publish_role() attaching a role to
+            # MQTT_USERNAME while we're already connected as it) -- "Client
+            # ... been disconnected by administrative action" in the broker
+            # log. That means this listener's connection can legitimately
+            # die outside of any network problem. Self-heal: drop our
+            # references so the next _send_command() call reconnects from
+            # scratch, and fail whatever call is currently waiting instead
+            # of leaving it to time out.
+            logger.warning(
+                "dynsec connection lost (%s) -- clearing state so the next call reconnects", exc
+            )
+            stack_to_close = None
+            async with self._conn_lock:
+                self._client = None
+                stack_to_close, self._stack = self._stack, None
+                self._listen_task = None
+            if stack_to_close is not None:
+                try:
+                    await stack_to_close.aclose()
+                except Exception:  # pragma: no cover
+                    pass
+            if self._pending_response is not None and not self._pending_response.done():
+                self._pending_response.set_exception(DynsecError(f"dynsec connection lost: {exc}"))
 
     def _dispatch_response(self, message: aiomqtt.Message) -> None:
         fut = self._pending_response
@@ -246,6 +310,43 @@ class MosquittoDynsecClient:
                 raise
             logger.info("dynsec role %s already exists, leaving as-is", DEVICE_ROLE_NAME)
         self._role_ready = True
+
+    async def ensure_admin_publish_role(self) -> None:
+        """Idempotently grant our OWN account (MQTT_USERNAME) publish
+        rights on genmon/+/cmd -- see ADMIN_PUBLISH_ROLE_NAME above for why
+        this is required in addition to dynsec admin rights. Call this once
+        at startup, right after `connect()`."""
+        if self._admin_publish_role_ready:
+            return
+        try:
+            await self._send_command(
+                {
+                    "command": "createRole",
+                    "rolename": ADMIN_PUBLISH_ROLE_NAME,
+                    "acls": _ADMIN_PUBLISH_ROLE_ACLS,
+                }
+            )
+            logger.info("dynsec role %s created", ADMIN_PUBLISH_ROLE_NAME)
+        except DynsecError as exc:
+            if not _error_is_already_exists(str(exc)):
+                raise
+            logger.info("dynsec role %s already exists, leaving as-is", ADMIN_PUBLISH_ROLE_NAME)
+
+        try:
+            await self._send_command(
+                {
+                    "command": "addClientRole",
+                    "username": settings.MQTT_USERNAME,
+                    "rolename": ADMIN_PUBLISH_ROLE_NAME,
+                }
+            )
+            logger.info("dynsec role %s attached to %s", ADMIN_PUBLISH_ROLE_NAME, settings.MQTT_USERNAME)
+        except DynsecError as exc:
+            # Same "Internal error" quirk as create_device_client's
+            # re-provisioning path -- see the comment there.
+            if "internal error" not in str(exc).lower():
+                raise
+        self._admin_publish_role_ready = True
 
     # -- device client management -----------------------------------------------
     async def create_device_client(self, device_key: str, password: str) -> None:

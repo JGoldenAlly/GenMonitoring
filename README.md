@@ -77,8 +77,18 @@ the GPIO commissioning check in the agent install steps below.
   hypertable compression/retention). The included `docker-compose.yml` uses
   `timescale/timescaledb:latest-pg16` if you'd rather run this as its own
   container/VM instead of on Unraid's own Postgres, if you have one.
-- A Mosquitto 2.x broker with the dynamic-security plugin (stock in
-  `eclipse-mosquitto:2`).
+- A Mosquitto broker, **version >= 2.1.0**, with the dynamic-security plugin
+  (stock in `eclipse-mosquitto:2`). This version floor is not optional: the
+  shared per-device MQTT role relies on Mosquitto's `%c`/`%u` ACL
+  substitution, which is broken on Mosquitto 2.0.x
+  (see `packages/api/app/services/mosquitto_dynsec.py` for the full writeup) --
+  on an affected version, device claiming will appear to succeed but the
+  device will never actually be able to publish/subscribe, and the retained
+  start/stop command will never reach it. Check with `mosquitto -v` if
+  anything in Part 2 seems to silently not work. The floating
+  `eclipse-mosquitto:2` tag is fine today, but pin an explicit
+  `eclipse-mosquitto:2.x.y` tag for production so a future re-pull can't
+  regress this.
 
 ### 1. Stand up Postgres and Mosquitto
 
@@ -113,7 +123,35 @@ in `mosquitto.conf` (port 8883) with real certificates, and set `MQTT_TLS=true`
 on both the `api` and `bridge` containers, and on every field agent's
 `device.conf`.
 
-### 2. Import the Unraid templates
+### 2. Build and publish the container images
+
+The Unraid templates expect prebuilt images at
+`ghcr.io/jgoldenally/genmonitoring-{api,bridge,portal}:latest`. Build and
+push them from the repo root:
+
+```bash
+docker build -f packages/api/Dockerfile -t ghcr.io/jgoldenally/genmonitoring-api:latest .
+docker build -f packages/bridge/Dockerfile -t ghcr.io/jgoldenally/genmonitoring-bridge:latest packages/bridge
+docker build -f packages/portal/Dockerfile -t ghcr.io/jgoldenally/genmonitoring-portal:latest packages/portal
+docker push ghcr.io/jgoldenally/genmonitoring-api:latest
+docker push ghcr.io/jgoldenally/genmonitoring-bridge:latest
+docker push ghcr.io/jgoldenally/genmonitoring-portal:latest
+```
+
+Note the **api** image's build context is the repo root (`.`), not
+`packages/api` -- its Dockerfile also bundles
+`packages/agent/genmon_agent.py` so `GET /devices/agent/download` (the field
+agent's self-update source) has something to serve. Keep the bundled agent
+script in sync with whatever `packages/agent/genmon_agent.py` the fleet is
+running when you cut a release.
+
+The **portal** image is built once with a placeholder API URL baked in and
+rewrites it at container start from the `NEXT_PUBLIC_API_URL` env var (see
+`packages/portal/docker-entrypoint.sh`) -- this is what lets the same
+published image work for every Unraid installation's own IP/hostname,
+despite Next.js normally baking `NEXT_PUBLIC_*` values in at build time.
+
+### 3. Import the Unraid templates
 
 In Unraid's Docker tab, click **Add Container**, switch the template
 dropdown to **"Template: (select one)"**, and instead paste each XML's raw
@@ -134,13 +172,19 @@ Start `genmonitoring-api` and `genmonitoring-bridge` first, then
 built-in Modbus templates (`generic-generator`, `cat-emcp42`,
 `generator-standard`) automatically on first startup.
 
-### 3. Create your first admin user
+### 4. Create your first admin user
 
-The API ships with no default users. Create the first admin account directly
-against the database (or via a one-off script/endpoint -- see
-`packages/api/README` if present, or use `docker exec` into the api
-container and run whatever admin-bootstrap helper it provides) before logging
-into the portal.
+The API ships with no default users, and every `/users` endpoint requires an
+existing admin -- by design, there's no self-serve registration. Bootstrap
+the first account directly in the running container:
+
+```bash
+docker exec -it genmonitoring-api python -m app.create_admin admin@example.com
+```
+
+You'll be prompted for a password interactively. Running this again for an
+email that already exists promotes that user to admin and resets their
+password, so it also works as an "I'm locked out" recovery step.
 
 ### Local development
 
@@ -189,8 +233,13 @@ scp -r packages/agent pi@<cm4-ip>:/tmp/genmon-agent
 
 ```bash
 ssh pi@<cm4-ip>
-sudo bash /tmp/genmon-agent/install.sh
+sudo GENMON_API_BASE=https://<your-unraid-ip-or-domain>:8000 bash /tmp/genmon-agent/install.sh
 ```
+
+(`GENMON_API_BASE` is optional but saves the manual edit in step 5 below --
+omit it and the installer defaults to fetching the agent script from GitHub
+instead of the api's `/devices/agent/download`, and leaves `api_base_url`
+as a placeholder for you to fill in.)
 
 This installs dependencies (NetworkManager, ModemManager, no VNC/router-mode
 packages), creates a dedicated unprivileged `genmon` system user, sets up a
@@ -207,9 +256,9 @@ the installer will tell you if one is pending.
 sudo reboot
 ```
 
-### 5. Set the API endpoint and (if used) cellular APN
+### 5. Set the API endpoint (if not already set via `GENMON_API_BASE`) and cellular APN
 
-Edit `/etc/genmon/device.conf`:
+Edit `/etc/genmon/device.conf` if needed:
 
 ```ini
 [device]
@@ -238,15 +287,20 @@ GPIO channels (`OUT1`/`IN1`) and enable start/stop control.
 
 ### 8. GPIO commissioning check -- do this before wiring to a live generator
 
+`install.sh` runs this automatically as its final step and prints the
+results, but re-run it any time (e.g. after a reboot, or before ever
+connecting a live generator) with:
+
 ```bash
-raspi-gpio get 23   # should show a plain input function, not SPI0_CE1
+sudo /tmp/genmon-agent/install.sh --commission-only
 ```
 
-Then toggle GPIO6 (e.g. via a short `gpiozero` one-liner run as the `genmon`
-user) and confirm the OUT1 screw terminal actually energizes/de-energizes --
-confirm continuity or a relay click, not just that the command ran without
-error. Only after this passes should you wire OUT1 into a real generator's
-2-wire start circuit.
+It checks `raspi-gpio get 23` shows a plain input function (not
+`SPI0_CE1` -- see the safety caveat above) and walks you through
+`gpioset gpiochip0 6=1` / `6=0` to energize/de-energize OUT1 while you
+confirm continuity or a relay click at the physical screw terminal. Only
+after this passes should you wire OUT1 into a real generator's 2-wire start
+circuit -- do not trust the pin mapping from documentation alone.
 
 ### 9. Verify RS-485 (if used)
 

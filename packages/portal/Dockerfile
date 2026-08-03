@@ -9,11 +9,13 @@ FROM node:20-alpine AS builder
 WORKDIR /app
 COPY --from=deps /app/node_modules ./node_modules
 COPY . .
-# NEXT_PUBLIC_API_URL is baked in at build time since it's read client-side;
-# override at build with --build-arg if the API lives somewhere other than
-# the default. Server-side env for a running container is not needed since
-# this app has no server components that call the API.
-ARG NEXT_PUBLIC_API_URL=http://localhost:8000
+# Build with a placeholder API URL, not a real one -- see
+# docker-entrypoint.sh for why: NEXT_PUBLIC_* vars are inlined at build
+# time, so baking in a real URL here would freeze it for every deployment
+# of this same published image. Pass --build-arg NEXT_PUBLIC_API_URL=...
+# only if you're building a private, single-purpose image and want to skip
+# the runtime substitution step entirely.
+ARG NEXT_PUBLIC_API_URL=http://__GENMON_RUNTIME_API_URL__
 ENV NEXT_PUBLIC_API_URL=${NEXT_PUBLIC_API_URL}
 ENV NEXT_TELEMETRY_DISABLED=1
 RUN npm run build
@@ -31,9 +33,12 @@ RUN addgroup --system --gid 1001 nodejs \
 COPY --from=builder /app/public ./public
 COPY --from=builder --chown=nextjs:nodejs /app/.next/standalone ./
 COPY --from=builder --chown=nextjs:nodejs /app/.next/static ./.next/static
+COPY --chown=nextjs:nodejs docker-entrypoint.sh /usr/local/bin/docker-entrypoint.sh
+RUN chmod +x /usr/local/bin/docker-entrypoint.sh
 
 USER nextjs
 
 EXPOSE 3000
 
+ENTRYPOINT ["docker-entrypoint.sh"]
 CMD ["node", "server.js"]
