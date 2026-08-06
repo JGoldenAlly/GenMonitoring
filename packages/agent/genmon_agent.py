@@ -71,7 +71,7 @@ from pymodbus.client import ModbusSerialClient, ModbusTcpClient
 
 AGENT_VERSION = "1.0.0"
 
-DEFAULT_API_BASE = "https://api.genmonitoring.example.com"
+DEFAULT_API_BASE = "https://api.allyoperations.com"
 DEFAULT_CONFIG_PATH = "/etc/genmon/device.conf"
 DEFAULT_LOG_DIR = "/var/log/genmon"
 
@@ -239,8 +239,8 @@ class ConfigStore:
         },
         "mqtt": {
             "host": "",
-            "port": "8883",
-            "tls": "true",
+            "port": "1883",
+            "tls": "false",
         },
         "gpio": {
             "in1_pin": "23",
@@ -862,8 +862,8 @@ class CommandChannel:
         host = self.config.get("mqtt", "host", fallback="")
         if not host:
             return
-        port = self.config.getint("mqtt", "port", fallback=8883)
-        tls = self.config.getboolean("mqtt", "tls", fallback=True)
+        port = self.config.getint("mqtt", "port", fallback=1883)
+        tls = self.config.getboolean("mqtt", "tls", fallback=False)
         key = (host, port, tls)
 
         with self._lock:

@@ -16,7 +16,7 @@ Modbus RTU support and remote start/stop control.
 ## Architecture
 
 ```
-CM4 field agent  --MQTT/TLS:8883-->  Mosquitto  -->  bridge  -->  Postgres + TimescaleDB
+CM4 field agent  --MQTT:1883-->  Mosquitto  -->  bridge  -->  Postgres + TimescaleDB
   (Modbus RTU/TCP,                                      ^                  ^
    GPIO IN1/OUT1)                                        |                  |
         ^ subscribes genmon/{key}/cmd  <---------------  api  <---------  portal
@@ -70,6 +70,42 @@ the GPIO commissioning check in the agent install steps below.
 
 ## Part 1 -- Deploying the containers on Unraid
 
+### Ally Operations production domains
+
+This deployment uses:
+
+| Service | Domain | Notes |
+|---|---|---|
+| `genmonitoring-api` | `https://api.allyoperations.com` | Browser + field-agent facing, HTTPS |
+| `genmonitoring-portal` | `https://genmon.allyoperations.com` | Browser facing, HTTPS |
+| Mosquitto | `mqtt.allyoperations.com:1883` | Field-agent facing, **plaintext MQTT, no TLS** |
+
+All three Unraid templates and the agent's `install.sh`/`device.conf.example`
+already default to these values. DNS (`A`/`CNAME` records for all three
+subdomains) needs to be in place before field agents can reach
+`api.allyoperations.com`/`mqtt.allyoperations.com` from wherever they connect
+from.
+
+For `api`/`portal` (plain HTTPS), any standard Unraid reverse proxy setup
+(SWAG, Nginx Proxy Manager, Cloudflare Tunnel, etc.) terminating TLS and
+forwarding to the container's port works as usual.
+
+**Mosquitto runs plaintext on 1883 by deliberate choice for this
+deployment** -- `MQTT_TLS=false` is the default in both Unraid templates
+and in the agent's config. This means device MQTT credentials, telemetry,
+and the start/stop command channel all travel unencrypted between a field
+agent and `mqtt.allyoperations.com:1883`. That's an acceptable trade for
+the simplicity of not managing broker certificates **only if** the network
+path field agents actually use to reach that port isn't the open internet
+-- e.g. it's firewalled to known agent egress IPs/ranges, or routed over a
+private APN/VPN backhaul rather than raw public internet. If you can't
+guarantee that, uncomment the TLS `listener 8883` block in
+`mosquitto/config/mosquitto.conf`, supply real certificates, and set
+`MQTT_TLS=true`/`MQTT_PORT=8883` on the `api`/`bridge` containers and in
+every field agent's `device.conf` instead (a plain HTTP reverse proxy can't
+front raw MQTT -- you'd need certs directly in Mosquitto or a TCP/SNI
+passthrough proxy in front of it).
+
 ### Prerequisites
 
 - A Postgres 16 instance with the TimescaleDB extension available (a plain
@@ -118,10 +154,10 @@ This generates `dynamic-security.json` (copy it alongside your
 
 Restart the Mosquitto container after copying the generated file in.
 
-For a **production** deployment, enable the commented-out TLS listener block
-in `mosquitto.conf` (port 8883) with real certificates, and set `MQTT_TLS=true`
-on both the `api` and `bridge` containers, and on every field agent's
-`device.conf`.
+This deployment intentionally runs plaintext on 1883 rather than TLS on
+8883 -- see "Ally Operations production domains" above for the security
+trade-off and how to switch to TLS instead if the network path to
+Mosquitto ever needs it.
 
 ### 2. Container images (built automatically by CI)
 
@@ -242,7 +278,7 @@ scp -r packages/agent pi@<cm4-ip>:/tmp/genmon-agent
 
 ```bash
 ssh pi@<cm4-ip>
-sudo GENMON_API_BASE=https://<your-unraid-ip-or-domain>:8000 bash /tmp/genmon-agent/install.sh
+sudo GENMON_API_BASE=https://api.allyoperations.com bash /tmp/genmon-agent/install.sh
 ```
 
 (`GENMON_API_BASE` is optional but saves the manual edit in step 5 below --
@@ -271,7 +307,7 @@ Edit `/etc/genmon/device.conf` if needed:
 
 ```ini
 [device]
-api_base_url = https://<your-unraid-ip-or-domain>:8000
+api_base_url = https://api.allyoperations.com
 
 [cellular]
 apn = <your Verizon-provisioned APN>

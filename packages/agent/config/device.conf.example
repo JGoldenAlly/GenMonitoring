@@ -20,7 +20,7 @@ cpu_serial =
 # runtime with the GENMON_API_BASE environment variable (e.g. via
 # /etc/genmon/agent.env, loaded by the systemd unit) without editing this
 # file -- useful for pointing a unit at a staging API temporarily.
-api_base_url = https://api.genmonitoring.example.com
+api_base_url = https://api.allyoperations.com
 
 # Kept in sync with the AGENT_VERSION constant in genmon_agent.py by the
 # agent itself on every start; only meaningful as an operational record.
@@ -38,8 +38,8 @@ device_bearer_token =
 # to connect -- the agent will not attempt an MQTT connection until "host"
 # is non-empty.
 host =
-port = 8883
-tls = true
+port = 1883
+tls = false
 
 # ---------------------------------------------------------------------------
 # [gpio] -- LOCAL-ONLY, SAFETY-CRITICAL. The agent's ConfigStore refuses,

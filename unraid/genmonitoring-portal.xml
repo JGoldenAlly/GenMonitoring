@@ -15,5 +15,5 @@
   <DateInstalled></DateInstalled>
   <DonateLink></DonateLink>
   <Config Type="Port" Name="Portal Port" Target="3000" Default="3000" Mode="tcp" Description="Web UI">3000</Config>
-  <Config Type="Variable" Name="NEXT_PUBLIC_API_URL" Target="NEXT_PUBLIC_API_URL" Default="" Mode="" Description="Browser-reachable URL of genmonitoring-api (e.g. http://your-unraid-ip:8000)" Display="always" Required="true" Mask="false"></Config>
+  <Config Type="Variable" Name="NEXT_PUBLIC_API_URL" Target="NEXT_PUBLIC_API_URL" Default="https://api.allyoperations.com" Mode="" Description="Browser-reachable URL of genmonitoring-api" Display="always" Required="true" Mask="false">https://api.allyoperations.com</Config>
 </Container>
