@@ -18,7 +18,7 @@ from app.routers import (
     templates,
     users,
 )
-from app.services.mosquitto_dynsec import dynsec_client
+from app.services.emqx_admin import emqx_admin_client
 from app.services.mqtt_publisher import mqtt_publisher
 from app.services.session_renewal import session_renewal_loop
 from app.services.template_seed import seed_builtin_templates
@@ -44,12 +44,11 @@ async def lifespan(app: FastAPI):
         )
 
     try:
-        await dynsec_client.connect()
-        await dynsec_client.ensure_device_role()
-        await dynsec_client.ensure_admin_publish_role()
+        await emqx_admin_client.connect()
+        await emqx_admin_client.ensure_admin_publish_role()
     except Exception:  # noqa: BLE001
         logger.exception(
-            "could not connect to mosquitto dynamic-security plugin at startup -- device "
+            "could not connect to EMQX's management API at startup -- device "
             "claim/unclaim will retry the connection lazily"
         )
 
@@ -66,7 +65,7 @@ async def lifespan(app: FastAPI):
         pass
 
     await mqtt_publisher.disconnect()
-    await dynsec_client.disconnect()
+    await emqx_admin_client.disconnect()
     await engine.dispose()
 
 

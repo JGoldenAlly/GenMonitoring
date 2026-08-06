@@ -18,6 +18,5 @@ out/
 .vscode/
 .idea/
 
-# Mosquitto generated state (secrets/local persistence, never commit)
-mosquitto/config/dynamic-security.json
-mosquitto/data/
+# EMQX generated state (secrets/local persistence, never commit)
+emqx/data/

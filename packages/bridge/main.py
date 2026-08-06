@@ -1,6 +1,6 @@
 """GenMonitoring bridge -- pure asyncio MQTT -> Postgres worker.
 
-No HTTP surface at all. Connects to the Mosquitto broker over TLS,
+No HTTP surface at all. Connects to the MQTT broker (EMQX) over TLS,
 subscribes to three explicit topic filters, validates each message with the
 matching pydantic schema, and writes into Postgres via asyncpg. Modeled on
 AetherLynk's bridge: an outer reconnect loop with exponential backoff around

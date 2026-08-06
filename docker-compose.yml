@@ -16,15 +16,34 @@ services:
       timeout: 5s
       retries: 10
 
-  mosquitto:
-    image: eclipse-mosquitto:2
+  emqx:
+    image: emqx/emqx:5.8.0
     restart: unless-stopped
+    environment:
+      # One password-based authenticator backed by EMQX's built-in database,
+      # and one authorization source of the same kind, denying anything
+      # with no matching rule -- the same "must have explicit credentials
+      # and an explicit ACL rule" posture Mosquitto's dynamic-security
+      # plugin gave us. See packages/api/app/services/emqx_admin.py for how
+      # per-device users/rules get created here.
+      EMQX_AUTHENTICATION__1__MECHANISM: password_based
+      EMQX_AUTHENTICATION__1__BACKEND: built_in_database
+      EMQX_AUTHENTICATION__1__USER_ID_TYPE: username
+      EMQX_AUTHORIZATION__SOURCES__1__TYPE: built_in_database
+      EMQX_AUTHORIZATION__NO_MATCH: deny
+      EMQX_API_KEY__BOOTSTRAP_FILE: /opt/emqx/data/bootstrap_api_keys.txt
     volumes:
-      - ./mosquitto/config:/mosquitto/config
-      - genmon-mosquitto-data:/mosquitto/data
+      # A single bind-mounted host directory (not a mix of a named volume
+      # + a file mount into it -- avoids a mount-path conflict) so
+      # emqx/bootstrap.sh can write bootstrap_api_keys.txt directly into it
+      # before first start, and EMQX's own built-in-database/Mnesia state
+      # persists here across restarts.
+      - ./emqx/data:/opt/emqx/data
     ports:
       - "1883:1883"
-      # - "8883:8883"   # enable once TLS certs are configured, see mosquitto.conf
+      - "18083:18083"   # dashboard + HTTP management API (used by the api container)
+      # - "8883:8883"   # enable once TLS certs are configured -- see the
+                         # EMQX_LISTENERS__SSL__* env vars in EMQX's docs
 
   api:
     build:
@@ -34,7 +53,7 @@ services:
     depends_on:
       postgres:
         condition: service_healthy
-      mosquitto:
+      emqx:
         condition: service_started
     environment:
       DATABASE_URL: postgresql+asyncpg://genmon:genmon@postgres:5432/genmonitoring
@@ -42,11 +61,14 @@ services:
       JWT_ALGORITHM: HS256
       JWT_ACCESS_TOKEN_EXPIRE_MINUTES: "30"
       JWT_REFRESH_TOKEN_EXPIRE_DAYS: "30"
-      MQTT_HOST: mosquitto
+      MQTT_HOST: emqx
       MQTT_PORT: "1883"
       MQTT_TLS: "false"
       MQTT_USERNAME: ${MQTT_API_USERNAME:-genmon-api}
       MQTT_PASSWORD: ${MQTT_API_PASSWORD:-changeme}
+      EMQX_API_URL: http://emqx:18083
+      EMQX_API_KEY: ${EMQX_API_KEY:-genmon-api}
+      EMQX_API_SECRET: ${EMQX_API_SECRET:-changeme}
       CORS_ORIGINS: http://localhost:3000
       PORT: "8000"
       AGENT_SCRIPT_PATH: /app/agent/genmon_agent.py
@@ -60,11 +82,11 @@ services:
     depends_on:
       postgres:
         condition: service_healthy
-      mosquitto:
+      emqx:
         condition: service_started
     environment:
       DATABASE_URL: postgresql+asyncpg://genmon:genmon@postgres:5432/genmonitoring
-      MQTT_HOST: mosquitto
+      MQTT_HOST: emqx
       MQTT_PORT: "1883"
       MQTT_TLS: "false"
       MQTT_USERNAME: ${MQTT_BRIDGE_USERNAME:-genmon-bridge}
@@ -84,4 +106,3 @@ services:
 
 volumes:
   genmon-postgres-data:
-  genmon-mosquitto-data:
