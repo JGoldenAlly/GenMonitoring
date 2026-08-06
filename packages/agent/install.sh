@@ -322,8 +322,8 @@ device_bearer_token =
 
 [mqtt]
 host =
-port = 8883
-tls = true
+port = 1883
+tls = false
 
 [gpio]
 in1_pin = 23

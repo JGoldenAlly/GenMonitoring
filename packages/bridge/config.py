@@ -24,8 +24,8 @@ class Settings(BaseSettings):
     # ACL (provisioned via Mosquitto dynamic-security by the api) to
     # read-only access on the three topic filters this worker subscribes to.
     MQTT_HOST: str = "localhost"
-    MQTT_PORT: int = 8883
-    MQTT_TLS: bool = True
+    MQTT_PORT: int = 1883
+    MQTT_TLS: bool = False
     MQTT_USERNAME: str = "genmon-bridge"
     MQTT_PASSWORD: str = "change-me"
     MQTT_TOPIC_PREFIX: str = "genmon"

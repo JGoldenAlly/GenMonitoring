@@ -24,8 +24,8 @@ class Settings(BaseSettings):
 
     # --- MQTT broker (api's own credentials) ---
     MQTT_HOST: str = "localhost"
-    MQTT_PORT: int = 8883
-    MQTT_TLS: bool = True
+    MQTT_PORT: int = 1883
+    MQTT_TLS: bool = False
     MQTT_USERNAME: str = "genmon-api"
     MQTT_PASSWORD: str = "change-me"
 

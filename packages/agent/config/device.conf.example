@@ -38,8 +38,8 @@ device_bearer_token =
 # to connect -- the agent will not attempt an MQTT connection until "host"
 # is non-empty.
 host =
-port = 8883
-tls = true
+port = 1883
+tls = false
 
 # ---------------------------------------------------------------------------
 # [gpio] -- LOCAL-ONLY, SAFETY-CRITICAL. The agent's ConfigStore refuses,

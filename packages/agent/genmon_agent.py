@@ -239,8 +239,8 @@ class ConfigStore:
         },
         "mqtt": {
             "host": "",
-            "port": "8883",
-            "tls": "true",
+            "port": "1883",
+            "tls": "false",
         },
         "gpio": {
             "in1_pin": "23",
@@ -862,8 +862,8 @@ class CommandChannel:
         host = self.config.get("mqtt", "host", fallback="")
         if not host:
             return
-        port = self.config.getint("mqtt", "port", fallback=8883)
-        tls = self.config.getboolean("mqtt", "tls", fallback=True)
+        port = self.config.getint("mqtt", "port", fallback=1883)
+        tls = self.config.getboolean("mqtt", "tls", fallback=False)
         key = (host, port, tls)
 
         with self._lock:
