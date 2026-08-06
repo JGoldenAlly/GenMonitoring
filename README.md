@@ -16,7 +16,7 @@ Modbus RTU support and remote start/stop control.
 ## Architecture
 
 ```
-CM4 field agent  --MQTT:1883-->  Mosquitto  -->  bridge  -->  Postgres + TimescaleDB
+CM4 field agent  --MQTT:1883-->  EMQX  -->  bridge  -->  Postgres + TimescaleDB
   (Modbus RTU/TCP,                                      ^                  ^
    GPIO IN1/OUT1)                                        |                  |
         ^ subscribes genmon/{key}/cmd  <---------------  api  <---------  portal
@@ -30,8 +30,8 @@ CM4 field agent  --MQTT:1883-->  Mosquitto  -->  bridge  -->  Postgres + Timesca
 - **`packages/agent`** -- the field-agent software that runs on the CM4.
 - **`unraid/`** -- Unraid Community Applications templates for the three
   containers above.
-- **`mosquitto/`** -- local/dev Mosquitto config + dynamic-security bootstrap
-  script (credential management, no `docker.sock` mount needed anywhere).
+- **`emqx/`** -- EMQX bootstrap script (credential management via EMQX's
+  HTTP Management API, no `docker.sock` mount needed anywhere).
 
 ## MQTT topics
 
@@ -78,7 +78,7 @@ This deployment uses:
 |---|---|---|
 | `genmonitoring-api` | `https://api.allyoperations.com` | Browser + field-agent facing, HTTPS |
 | `genmonitoring-portal` | `https://genmon.allyoperations.com` | Browser facing, HTTPS |
-| Mosquitto | `mqtt.allyoperations.com:1883` | Field-agent facing, **plaintext MQTT, no TLS** |
+| EMQX | `mqtt.allyoperations.com:1883` | Field-agent facing, **plaintext MQTT, no TLS**; dashboard/management API on `:18083` |
 
 All three Unraid templates and the agent's `install.sh`/`device.conf.example`
 already default to these values. DNS (`A`/`CNAME` records for all three
@@ -90,21 +90,25 @@ For `api`/`portal` (plain HTTPS), any standard Unraid reverse proxy setup
 (SWAG, Nginx Proxy Manager, Cloudflare Tunnel, etc.) terminating TLS and
 forwarding to the container's port works as usual.
 
-**Mosquitto runs plaintext on 1883 by deliberate choice for this
-deployment** -- `MQTT_TLS=false` is the default in both Unraid templates
-and in the agent's config. This means device MQTT credentials, telemetry,
-and the start/stop command channel all travel unencrypted between a field
-agent and `mqtt.allyoperations.com:1883`. That's an acceptable trade for
-the simplicity of not managing broker certificates **only if** the network
+**EMQX runs plaintext on 1883 by deliberate choice for this deployment** --
+`MQTT_TLS=false` is the default in both Unraid templates and in the
+agent's config. This means device MQTT credentials, telemetry, and the
+start/stop command channel all travel unencrypted between a field agent
+and `mqtt.allyoperations.com:1883`. That's an acceptable trade for the
+simplicity of not managing broker certificates **only if** the network
 path field agents actually use to reach that port isn't the open internet
 -- e.g. it's firewalled to known agent egress IPs/ranges, or routed over a
 private APN/VPN backhaul rather than raw public internet. If you can't
-guarantee that, uncomment the TLS `listener 8883` block in
-`mosquitto/config/mosquitto.conf`, supply real certificates, and set
-`MQTT_TLS=true`/`MQTT_PORT=8883` on the `api`/`bridge` containers and in
-every field agent's `device.conf` instead (a plain HTTP reverse proxy can't
-front raw MQTT -- you'd need certs directly in Mosquitto or a TCP/SNI
-passthrough proxy in front of it).
+guarantee that, enable a TLS listener on EMQX (`EMQX_LISTENERS__SSL__DEFAULT__BIND`
+and the corresponding cert/key env vars -- see EMQX's listener
+documentation) and set `MQTT_TLS=true`/`MQTT_PORT=8883` on the
+`api`/`bridge` containers and in every field agent's `device.conf` instead
+(a plain HTTP reverse proxy can't front raw MQTT -- you'd need certs
+directly in EMQX or a TCP/SNI passthrough proxy in front of it). Note this
+is separate from EMQX's dashboard/management API port (`18083`), which is
+plain HTTP either way in this setup -- keep that port itself firewalled to
+trusted operator IPs only, since it's the same admin credential the api
+uses to provision device MQTT accounts.
 
 ### Prerequisites
 
@@ -113,51 +117,67 @@ passthrough proxy in front of it).
   hypertable compression/retention). The included `docker-compose.yml` uses
   `timescale/timescaledb:latest-pg16` if you'd rather run this as its own
   container/VM instead of on Unraid's own Postgres, if you have one.
-- A Mosquitto broker, **version >= 2.1.0**, with the dynamic-security plugin
-  (stock in `eclipse-mosquitto:2`). This version floor is not optional: the
-  shared per-device MQTT role relies on Mosquitto's `%c`/`%u` ACL
-  substitution, which is broken on Mosquitto 2.0.x
-  (see `packages/api/app/services/mosquitto_dynsec.py` for the full writeup) --
-  on an affected version, device claiming will appear to succeed but the
-  device will never actually be able to publish/subscribe, and the retained
-  start/stop command will never reach it. Check with `mosquitto -v` if
-  anything in Part 2 seems to silently not work. The floating
-  `eclipse-mosquitto:2` tag is fine today, but pin an explicit
-  `eclipse-mosquitto:2.x.y` tag for production so a future re-pull can't
-  regress this.
+- An **EMQX** broker (`emqx/emqx:5.8.0` or similar 5.x). The api manages
+  per-device MQTT credentials and ACL rules entirely through EMQX's HTTP
+  Management API (`packages/api/app/services/emqx_admin.py`) -- no
+  `docker.sock` mount, no broker CLI tool, just REST calls authenticated
+  with an API key/secret pair (see `emqx/bootstrap.sh`). ⚠️ This
+  integration was built from EMQX's documented REST API but has **not**
+  been exercised against a live broker (this project's build environment
+  couldn't reach EMQX's registry/docs to verify it empirically, unlike the
+  Mosquitto integration it replaced, which was live-tested). Budget time to
+  verify `emqx_admin.py`'s exact API calls against your actual EMQX version
+  before trusting device claim/unclaim in production -- the module's
+  docstring lists exactly what to check.
 
-### 1. Stand up Postgres and Mosquitto
+### 1. Stand up Postgres and EMQX
 
 If you don't already have a Postgres+TimescaleDB instance, add one via the
 Unraid Community Applications store (search `timescaledb`), or run the
 `postgres` service from this repo's `docker-compose.yml` standalone.
 
-For Mosquitto: add the `eclipse-mosquitto:2` container (Community
-Applications has a template, or add it manually), mounting a config
-directory to `/mosquitto/config` and a data directory to `/mosquitto/data`.
-Copy `mosquitto/config/mosquitto.conf` from this repo into that config
-directory.
+For EMQX: add the `emqx/emqx:5.8.0` container (Community Applications
+has an official EMQX template, or add it manually), with authentication
+and authorization configured for its built-in database backend and a
+bootstrap API key file mounted in. The env vars/volumes this needs are the
+same ones set on the `emqx` service in this repo's `docker-compose.yml` --
+mirror those on the Unraid container:
 
-Then, from a machine with Docker (does not need to be Unraid itself, just
-network-reachable to the broker), run the bootstrap script **once**:
+```
+EMQX_AUTHENTICATION__1__MECHANISM=password_based
+EMQX_AUTHENTICATION__1__BACKEND=built_in_database
+EMQX_AUTHENTICATION__1__USER_ID_TYPE=username
+EMQX_AUTHORIZATION__SOURCES__1__TYPE=built_in_database
+EMQX_AUTHORIZATION__NO_MATCH=deny
+EMQX_API_KEY__BOOTSTRAP_FILE=/opt/emqx/data/bootstrap_api_keys.txt
+```
+mounting a host directory (for `bootstrap_api_keys.txt` plus EMQX's own
+persistent state) to `/opt/emqx/data`, and exposing port `1883` (MQTT) and
+`18083` (dashboard/management API -- keep this one firewalled to trusted
+operator access only, see the security note above).
+
+Then, from a machine with network access to that data directory (or by
+running it directly against the mounted path if this is the same host),
+run the bootstrap script:
 
 ```bash
-./mosquitto/bootstrap-dynsec.sh <api-admin-password> <bridge-password>
+./emqx/bootstrap.sh <bridge-mqtt-password>
 ```
 
-This generates `dynamic-security.json` (copy it alongside your
-`mosquitto.conf` on the Unraid share) with:
-- a `genmon-api` admin account (used by the API to provision/revoke
-  per-device MQTT credentials and to publish start/stop commands), and
-- a restricted `genmon-bridge` account (subscribe-only, telemetry/IO/ack
-  topics only).
-
-Restart the Mosquitto container after copying the generated file in.
+The first run generates `emqx/data/bootstrap_api_keys.txt` and prints an
+`EMQX_API_KEY`/`EMQX_API_SECRET` pair to set on the api container -- copy
+that file to wherever the EMQX container's `/opt/emqx/data` is mounted
+and restart EMQX so it picks it up. Run the script **again** (same
+arguments) once EMQX is back up: this second run creates the
+`genmon-bridge` MQTT account and its subscribe-only ACL rules over EMQX's
+REST API. The api's own MQTT account and its `genmon/+/cmd` publish rule
+are provisioned automatically the first time the api container starts, so
+there's nothing further to do for it here.
 
 This deployment intentionally runs plaintext on 1883 rather than TLS on
 8883 -- see "Ally Operations production domains" above for the security
-trade-off and how to switch to TLS instead if the network path to
-Mosquitto ever needs it.
+trade-off and how to switch to TLS instead if the network path to EMQX
+ever needs it.
 
 ### 2. Container images (built automatically by CI)
 
@@ -209,8 +229,10 @@ under `unraid/`):
 
 Fill in the required fields for each (all marked `Required="true"` in the
 template): database URL, `JWT_SECRET` (generate with `openssl rand -hex 32`),
-Mosquitto host/port/credentials, `CORS_ORIGINS` (your portal's URL), and for
-the portal, `NEXT_PUBLIC_API_URL` (your api's browser-reachable URL).
+EMQX host/port/credentials (and, on the api template only, `EMQX_API_URL`/
+`EMQX_API_KEY`/`EMQX_API_SECRET` from step 1's bootstrap run), `CORS_ORIGINS`
+(your portal's URL), and for the portal, `NEXT_PUBLIC_API_URL` (your api's
+browser-reachable URL).
 
 Start `genmonitoring-api` and `genmonitoring-bridge` first, then
 `genmonitoring-portal`. The API runs its Alembic migrations and seeds the
@@ -233,11 +255,11 @@ password, so it also works as an "I'm locked out" recovery step.
 
 ### Local development
 
-`docker compose up --build` from the repo root brings up Postgres, Mosquitto,
+`docker compose up --build` from the repo root brings up Postgres, EMQX,
 api, bridge, and portal together, using the plaintext (`MQTT_TLS=false`)
-1883 listener for convenience. Run `mosquitto/bootstrap-dynsec.sh` once
-first (`docker compose up postgres mosquitto -d` to get the broker running,
-then bootstrap against it).
+1883 listener for convenience. Run `emqx/bootstrap.sh` once first
+(`docker compose up postgres emqx -d` to get the broker running, then
+bootstrap against it -- see step 1 above for the two-run flow).
 
 ---
 
@@ -392,6 +414,6 @@ packages/portal/       Next.js web UI
 packages/agent/        CM4 field-agent software + install script
 shared/schema.py       Canonical MQTT topic/payload/device-key reference
 unraid/                Unraid Community Applications templates
-mosquitto/             Local/dev broker config + dynamic-security bootstrap
+emqx/                  EMQX bootstrap script (+ generated data/ dir, gitignored)
 docker-compose.yml     Local development stack
 ```

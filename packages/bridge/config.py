@@ -21,8 +21,11 @@ class Settings(BaseSettings):
 
     # --- MQTT broker ---
     # The bridge connects with its own dedicated broker account, scoped by
-    # ACL (provisioned via Mosquitto dynamic-security by the api) to
-    # read-only access on the three topic filters this worker subscribes to.
+    # ACL (provisioned via EMQX's HTTP Management API by emqx/bootstrap.sh,
+    # not by the api itself -- the bridge account is static, unlike
+    # per-device accounts which the api creates/deletes at claim/unclaim
+    # time) to read-only access on the three topic filters this worker
+    # subscribes to.
     MQTT_HOST: str = "localhost"
     MQTT_PORT: int = 1883
     MQTT_TLS: bool = False

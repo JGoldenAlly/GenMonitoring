@@ -22,12 +22,20 @@ class Settings(BaseSettings):
     JWT_ACCESS_TOKEN_EXPIRE_MINUTES: int = 30
     JWT_REFRESH_TOKEN_EXPIRE_DAYS: int = 30
 
-    # --- MQTT broker (api's own credentials) ---
+    # --- MQTT broker (api's own pub/sub credentials, for publishing
+    # genmon/{device_key}/cmd) ---
     MQTT_HOST: str = "localhost"
     MQTT_PORT: int = 1883
     MQTT_TLS: bool = False
     MQTT_USERNAME: str = "genmon-api"
     MQTT_PASSWORD: str = "change-me"
+
+    # --- EMQX HTTP Management API (separate from the MQTT pub/sub
+    # credentials above -- this is what app/services/emqx_admin.py uses to
+    # provision/revoke per-device MQTT credentials and ACL rules) ---
+    EMQX_API_URL: str = "http://localhost:18083"
+    EMQX_API_KEY: str = "change-me"
+    EMQX_API_SECRET: str = "change-me"
 
     # --- CORS ---
     CORS_ORIGINS: str = "http://localhost:3000"

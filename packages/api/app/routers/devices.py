@@ -29,7 +29,7 @@ from app.schemas.devices import (
 )
 from app.security import generate_device_bearer_token
 from app.services import device_service
-from app.services.mosquitto_dynsec import DynsecError, dynsec_client
+from app.services.emqx_admin import EmqxAdminError, emqx_admin_client
 
 router = APIRouter(prefix="/devices", tags=["devices"])
 
@@ -173,8 +173,8 @@ async def claim_device(
 
     token = generate_device_bearer_token()
     try:
-        await dynsec_client.create_device_client(device_key, token)
-    except DynsecError as exc:
+        await emqx_admin_client.create_device_client(device_key, token)
+    except EmqxAdminError as exc:
         raise HTTPException(
             status_code=status.HTTP_502_BAD_GATEWAY,
             detail=f"Failed to provision MQTT credentials for device: {exc}",
@@ -199,8 +199,8 @@ async def unclaim_device(device_key: str, db: AsyncSession = Depends(get_db)) ->
         raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail="Device is not claimed")
 
     try:
-        await dynsec_client.delete_device_client(device_key)
-    except DynsecError as exc:
+        await emqx_admin_client.delete_device_client(device_key)
+    except EmqxAdminError as exc:
         raise HTTPException(
             status_code=status.HTTP_502_BAD_GATEWAY,
             detail=f"Failed to remove MQTT credentials for device: {exc}",
