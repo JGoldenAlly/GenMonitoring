@@ -77,7 +77,7 @@ This deployment uses:
 | Service | Domain | Notes |
 |---|---|---|
 | `genmonitoring-api` | `https://api.allyoperations.com` | Browser + field-agent facing, HTTPS |
-| `genmonitoring-portal` | `https://genmon.allyoperations.com` | Browser facing, HTTPS |
+| `genmonitoring-portal` | `https://portal.allyoperations.com` | Browser facing, HTTPS |
 | EMQX | `mqtt.allyoperations.com:1883` | Field-agent facing, **plaintext MQTT, no TLS**; dashboard/management API on `:18083` |
 
 All three Unraid templates and the agent's `install.sh`/`device.conf.example`
