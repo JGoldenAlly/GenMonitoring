@@ -121,14 +121,25 @@ uses to provision device MQTT accounts.
   per-device MQTT credentials and ACL rules entirely through EMQX's HTTP
   Management API (`packages/api/app/services/emqx_admin.py`) -- no
   `docker.sock` mount, no broker CLI tool, just REST calls authenticated
-  with an API key/secret pair (see `emqx/bootstrap.sh`). ⚠️ This
-  integration was built from EMQX's documented REST API but has **not**
-  been exercised against a live broker (this project's build environment
-  couldn't reach EMQX's registry/docs to verify it empirically, unlike the
-  Mosquitto integration it replaced, which was live-tested). Budget time to
-  verify `emqx_admin.py`'s exact API calls against your actual EMQX version
-  before trusting device claim/unclaim in production -- the module's
-  docstring lists exactly what to check.
+  with an API key/secret pair (see `emqx/bootstrap.sh`). This integration
+  was originally built from EMQX's documented REST API without live
+  testing, then spot-checked by hand against this deployment's real EMQX
+  5.6.2 instance -- see `emqx_admin.py`'s docstring for exactly what's
+  confirmed vs. still inferred.
+  **If you're configuring EMQX by hand through its dashboard** (as opposed
+  to the env-var-driven `docker-compose.yml` path), two things that aren't
+  obvious and will otherwise cost you time (they did here):
+  - **Authentication** and **Authorization** are two separate dashboard
+    sections/steps -- adding one does NOT imply the other exists. A
+    broker with only Authentication configured will 404 with `"Not found:
+    built_in_database"` on every authorization API call until you
+    separately add an Authorization source of type **Built-in Database**
+    (Access Control -> Authorization -> Create).
+  - EMQX evaluates authorization sources **in order**, first match wins.
+    If a default/other source (e.g. a "File" backend) is ranked ahead of
+    Built-in Database and has any broad rule, it can silently shadow the
+    rules this project sets -- check the source order and what's actually
+    in any other enabled source.
 
 ### 1. Stand up Postgres and EMQX
 

@@ -7,25 +7,42 @@ authorization through a normal REST API -- no MQTT connection involved for
 admin operations at all.
 
 ============================================================================
-READ THIS BEFORE MODIFYING -- NOT verified against a live broker
+READ THIS BEFORE MODIFYING -- partially verified against a live broker
 ============================================================================
-The old Mosquitto module was built, then empirically tested against a real
-broker, which caught several real bugs (see its module docstring). This
-module could NOT be tested the same way: this sandbox's network policy
-blocks both pulling emqx/emqx and fetching docs.emqx.com/emqx.io directly.
-It's built from EMQX 5.x's documented REST API via web search of
-docs.emqx.com pages and community discussions/PRs, cross-checked for
-internal consistency, but not exercised against a running instance.
+This module was originally built with NO live verification (built from
+EMQX 5.x's documented REST API via web search, cross-checked for internal
+consistency only) because this project's build environment couldn't reach
+emqx/emqx or docs.emqx.com/emqx.io to test against. It has since been
+spot-checked by hand against a real production EMQX 5.6.2 instance
+(mqtt.allyoperations.com), which CONFIRMED:
+  - POST /api/v5/authentication/password_based:built_in_database/users
+    with {"user_id", "password"} succeeds (2xx, returns the created user
+    object) and 409s with an "ALREADY_EXISTS"-shaped body on a repeat --
+    exactly what _looks_like_conflict()/_upsert_mqtt_user() assume.
+  - POST /api/v5/authorization/sources/built_in_database/rules/users
+    exists and works for a first create, but is a STRICT CREATE, not an
+    upsert -- confirmed empirically: a second POST for the same username
+    returns 409 `{"code":"ALREADY_EXISTS","message":"User '<name>' already
+    exist"}` rather than replacing the rule set. _set_user_rules() now
+    handles this by falling back to PUT .../rules/users/{username} on
+    conflict, mirroring _upsert_mqtt_user()'s pattern -- but that PUT path
+    is still an INFERENCE (by symmetry with the authn side), not itself
+    independently confirmed. If a device re-claim ever fails here, this is
+    the first thing to check with a live curl call.
+  - Authentication and Authorization are two independent things you must
+    each explicitly add via the EMQX dashboard (or equivalent config) --
+    adding one does NOT imply the other exists. A fresh EMQX instance with
+    only Authentication configured will 404 with "Not found:
+    built_in_database" on every authorization call until an Authorization
+    source of type Built-in Database is separately added (Dashboard:
+    Access Control -> Authorization -> Create -> Built-in Database). Watch
+    out for other authorization sources (e.g. a default "File" backend)
+    ranked ahead of it -- EMQX evaluates sources in order and the first
+    one to match (allow or deny) wins, so a broad rule in an
+    earlier-ranked source can silently shadow the rules this module sets.
 
-Before depending on this in production: stand up a real EMQX container and
-exercise create_device_client / delete_device_client / ensure_own_mqtt_user
-against it with `curl -u $EMQX_API_KEY:$EMQX_API_SECRET $EMQX_API_URL/api/v5/...`
-matching the calls below, the same way the Mosquitto module was verified.
-Specifically worth confirming:
-  - The exact success/conflict status codes for POST .../users (assumed
-    201 success / 409 conflict; the _looks_like_conflict() fallback below
-    also checks response text as a hedge against getting the status code
-    wrong).
+Still NOT independently verified, carried over from the original
+build-from-docs pass:
   - Whether /api/v5/authorization/sources/built_in_database/rules/users
     (per-username rules, used here) behaves as documented for
     rules/clients (per-clientid rules), which is the one confirmed-via-
@@ -165,9 +182,20 @@ class EmqxAdminClient:
         self._raise_for_status(resp, f"create/reset mqtt user '{username}'")
 
     async def _set_user_rules(self, username: str, rules: list[dict]) -> None:
+        # CONFIRMED against a live EMQX 5.6.2 instance: this endpoint is a
+        # strict create, NOT an upsert -- POSTing rules for a username that
+        # already has a rule set returns 409 ALREADY_EXISTS rather than
+        # replacing them (unlike the authn side, which really does behave
+        # like the module docstring originally assumed for both). Fall back
+        # to PUT-by-username to update an existing rule set, mirroring
+        # _upsert_mqtt_user's pattern. The PUT path/body shape below is
+        # inferred from that same symmetry, not independently confirmed --
+        # verify it if a re-claim ever fails here.
         await self.connect()
         assert self._client is not None
         resp = await self._client.post(AUTHZ_USER_RULES_PATH, json=[{"username": username, "rules": rules}])
+        if _looks_like_conflict(resp):
+            resp = await self._client.put(f"{AUTHZ_USER_RULES_PATH}/{username}", json={"rules": rules})
         self._raise_for_status(resp, f"set ACL rules for '{username}'")
 
     # -- api's own mqtt account (publishes genmon/{device_key}/cmd) -------------
