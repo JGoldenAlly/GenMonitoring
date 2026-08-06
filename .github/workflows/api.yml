@@ -20,7 +20,7 @@ concurrency:
   cancel-in-progress: true
 
 env:
-  IMAGE_NAME: ghcr.io/${{ github.repository_owner }}/genmonitoring-api
+  IMAGE_NAME: ghcr.io/jgoldenally/genmonitoring-api
 
 jobs:
   build:
