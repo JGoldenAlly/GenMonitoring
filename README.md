@@ -70,6 +70,35 @@ the GPIO commissioning check in the agent install steps below.
 
 ## Part 1 -- Deploying the containers on Unraid
 
+### Ally Operations production domains
+
+This deployment uses:
+
+| Service | Domain | Notes |
+|---|---|---|
+| `genmonitoring-api` | `https://api.allyoperations.com` | Browser + field-agent facing |
+| `genmonitoring-portal` | `https://genmon.allyoperations.com` | Browser facing |
+| Mosquitto | `mqtt.allyoperations.com:8883` | Field-agent facing, MQTT/TLS -- **not** HTTP |
+
+All three Unraid templates and the agent's `install.sh`/`device.conf.example`
+already default to these values. DNS (`A`/`CNAME` records for all three
+subdomains) and TLS need to be in place before field agents can reach
+`api.allyoperations.com`/`mqtt.allyoperations.com` from the internet.
+
+For `api`/`portal` (plain HTTPS), any standard Unraid reverse proxy setup
+(SWAG, Nginx Proxy Manager, Cloudflare Tunnel, etc.) terminating TLS and
+forwarding to the container's port works as usual.
+
+For Mosquitto, **a plain HTTP-oriented reverse proxy won't work** -- MQTT
+isn't HTTP, so `mqtt.allyoperations.com:8883` needs either (a) real TLS
+certificates mounted directly into the Mosquitto container and used by its
+own `listener 8883` block (see the commented-out example in
+`mosquitto/config/mosquitto.conf`), or (b) a TCP/SNI-passthrough proxy in
+front of it (e.g. SWAG/Nginx `stream {}` block, or Traefik's TCP router) --
+not a normal HTTP virtual host. Whichever you choose, verify with
+`openssl s_client -connect mqtt.allyoperations.com:8883` that a real
+certificate chain comes back before pointing field agents at it.
+
 ### Prerequisites
 
 - A Postgres 16 instance with the TimescaleDB extension available (a plain
@@ -242,7 +271,7 @@ scp -r packages/agent pi@<cm4-ip>:/tmp/genmon-agent
 
 ```bash
 ssh pi@<cm4-ip>
-sudo GENMON_API_BASE=https://<your-unraid-ip-or-domain>:8000 bash /tmp/genmon-agent/install.sh
+sudo GENMON_API_BASE=https://api.allyoperations.com bash /tmp/genmon-agent/install.sh
 ```
 
 (`GENMON_API_BASE` is optional but saves the manual edit in step 5 below --
@@ -271,7 +300,7 @@ Edit `/etc/genmon/device.conf` if needed:
 
 ```ini
 [device]
-api_base_url = https://<your-unraid-ip-or-domain>:8000
+api_base_url = https://api.allyoperations.com
 
 [cellular]
 apn = <your Verizon-provisioned APN>

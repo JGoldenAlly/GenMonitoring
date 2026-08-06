@@ -71,7 +71,7 @@ from pymodbus.client import ModbusSerialClient, ModbusTcpClient
 
 AGENT_VERSION = "1.0.0"
 
-DEFAULT_API_BASE = "https://api.genmonitoring.example.com"
+DEFAULT_API_BASE = "https://api.allyoperations.com"
 DEFAULT_CONFIG_PATH = "/etc/genmon/device.conf"
 DEFAULT_LOG_DIR = "/var/log/genmon"
 

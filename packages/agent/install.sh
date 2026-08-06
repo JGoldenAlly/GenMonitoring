@@ -5,7 +5,7 @@
 # 64-bit). Must be run as root, e.g.:
 #
 #   sudo ./install.sh
-#   sudo GENMON_API_BASE=https://api.genmonitoring.example.com ./install.sh
+#   sudo GENMON_API_BASE=https://api.allyoperations.com ./install.sh
 #   sudo GENMON_AGENT_SOURCE=github GENMON_AGENT_VERSION=1.0.0 ./install.sh
 #
 # Environment variables recognized:
@@ -254,7 +254,7 @@ fetch_agent_files() {
 
   case "$mode" in
     api)
-      local api_base="${GENMON_API_BASE:-https://api.genmonitoring.example.com}"
+      local api_base="${GENMON_API_BASE:-https://api.allyoperations.com}"
       agent_url="${api_base%/}/devices/agent/download"
       ;;
     github)
@@ -314,7 +314,7 @@ write_embedded_device_conf_template() {
 [device]
 device_key =
 cpu_serial =
-api_base_url = https://api.genmonitoring.example.com
+api_base_url = https://api.allyoperations.com
 agent_version = 0.0.0
 
 [auth]
