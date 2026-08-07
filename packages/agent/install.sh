@@ -48,7 +48,21 @@ log_info()  { printf "${_C_INFO}    [info]  %s${_C_RESET}\n" "$1"; }
 log_warn()  { printf "${_C_WARN}    [warn]  %s${_C_RESET}\n" "$1" >&2; }
 log_error() { printf "${_C_ERROR}    [error] %s${_C_RESET}\n" "$1" >&2; }
 
-SCRIPT_DIR="$(cd "$(dirname "$(readlink -f "${BASH_SOURCE[0]}")")" && pwd)"
+# BASH_SOURCE[0] is unset when this script is piped into bash (e.g.
+# `curl ... | bash`) rather than run from a saved file -- there is no
+# script file to locate in that case, so SCRIPT_DIR is deliberately left
+# empty rather than letting `set -u` kill the script on an unbound-variable
+# reference. write_device_conf/install_systemd_service already fall back
+# to embedded templates when SCRIPT_DIR-relative files aren't found, which
+# covers this case correctly; only the --commission-only re-run message
+# below needs to know PIPED_INSTALL to give the right instructions.
+PIPED_INSTALL=0
+if [[ -n "${BASH_SOURCE[0]:-}" ]] && [[ -f "${BASH_SOURCE[0]}" ]]; then
+  SCRIPT_DIR="$(cd "$(dirname "$(readlink -f "${BASH_SOURCE[0]}")")" && pwd)"
+else
+  SCRIPT_DIR=""
+  PIPED_INSTALL=1
+fi
 CONFIG_TXT="/boot/firmware/config.txt"
 REBOOT_REQUIRED=0
 PYTHON_BIN=""
@@ -108,18 +122,48 @@ install_apt_dependencies() {
   export DEBIAN_FRONTEND=noninteractive
   apt-get update -qq
   # Deliberately minimal set for a headless field agent: no xvfb/vnc/
-  # dnsmasq/iptables/chromium. raspi-gpio + gpiod (gpioset/gpioget) are for
-  # the commissioning step only.
+  # dnsmasq/iptables/chromium. These must all succeed -- gpiod provides
+  # gpioset/gpioget, used by the commissioning step below.
   apt-get install -y --no-install-recommends \
     network-manager \
     modemmanager \
     python3-venv \
     python3-pip \
-    raspi-gpio \
     gpiod \
     curl \
     ca-certificates
-  log_info "apt dependencies installed."
+  log_info "Core apt dependencies installed."
+  install_gpio_pinmux_tool
+}
+
+# GPIO pinmux inspection tool ('raspi-gpio' or its newer replacement
+# 'pinctrl') -- used ONLY by the Step 15 commissioning check to confirm
+# IN1/GPIO23 isn't SPI0-claimed. Handled as its own best-effort step,
+# separate from the core dependencies above: confirmed live that
+# 'raspi-gpio' isn't installable via apt on a "trixie"-based Raspberry Pi
+# OS release ("E: Unable to locate package raspi-gpio") -- it's been
+# superseded there by 'pinctrl', which recent Raspberry Pi OS images often
+# ship preinstalled already. A failure here must NEVER abort the rest of
+# the install; commissioning_checks() below adapts to whichever tool (if
+# any) actually ends up available.
+install_gpio_pinmux_tool() {
+  if command -v pinctrl >/dev/null 2>&1 || command -v raspi-gpio >/dev/null 2>&1; then
+    log_info "GPIO pinmux tool already present ($(command -v pinctrl || command -v raspi-gpio))."
+    return
+  fi
+  if apt-get install -y --no-install-recommends raspi-gpio >/dev/null 2>&1; then
+    log_info "Installed 'raspi-gpio'."
+    return
+  fi
+  if apt-get install -y --no-install-recommends pinctrl >/dev/null 2>&1; then
+    log_info "Installed 'pinctrl'."
+    return
+  fi
+  log_warn "Neither 'raspi-gpio' nor 'pinctrl' could be installed (not packaged for this OS release,"
+  log_warn "or already provided by the base image under a different mechanism). The commissioning"
+  log_warn "check in Step 15 will not be able to automatically verify IN1/GPIO23 isn't SPI0-claimed --"
+  log_warn "you'll need to check that manually (e.g. 'cat /sys/kernel/debug/pinctrl/*/pinmux-pins' if"
+  log_warn "debugfs is mounted) before wiring OUT1 to a live generator."
 }
 
 # ---------------------------------------------------------------------------
@@ -535,14 +579,27 @@ commissioning_checks() {
     log_warn "/dev/ttyAMA5 does not exist yet."
     if [[ "$REBOOT_REQUIRED" -eq 1 ]]; then
       log_warn "This is expected until the pending reboot completes. After rebooting, re-run:"
-      log_warn "    sudo ${SCRIPT_DIR}/install.sh --commission-only"
+      if [[ "$PIPED_INSTALL" -eq 1 ]]; then
+        log_warn "    curl -fsSL <the same URL you used before> | sudo bash -s -- --commission-only"
+      else
+        log_warn "    sudo ${SCRIPT_DIR}/install.sh --commission-only"
+      fi
     else
       log_warn "This is unexpected since no reboot was pending -- check 'dmesg | grep tty' and"
       log_warn "${CONFIG_TXT} for 'dtoverlay=uart5'."
     fi
   fi
 
-  cat <<'EOF'
+  local pinmux_check_line
+  if command -v pinctrl >/dev/null 2>&1; then
+    pinmux_check_line="       pinctrl get 23"
+  elif command -v raspi-gpio >/dev/null 2>&1; then
+    pinmux_check_line="       raspi-gpio get 23"
+  else
+    pinmux_check_line="       (neither 'pinctrl' nor 'raspi-gpio' is available on this system --\n       check /sys/kernel/debug/pinctrl/*/pinmux-pins manually instead, or\n       install one of those tools yourself before proceeding)"
+  fi
+
+  cat <<EOF
 
 ============================================================
  GPIO COMMISSIONING -- REQUIRED BEFORE CONNECTING A REAL GENERATOR
@@ -555,7 +612,7 @@ Verify BOTH pins against the physical hardware before wiring OUT1 to a
 live generator start relay:
 
   1. Verify IN1 (GPIO23) is a plain input and NOT claimed by SPI0:
-       raspi-gpio get 23
+$(echo -e "$pinmux_check_line")
      Expect an INPUT function, not an SPI0 ALT function (e.g. "CE1").
      If you see an SPI ALT function here, STOP. Do not proceed. This
      almost always means an SPI0 dual-chip-select overlay is enabled
