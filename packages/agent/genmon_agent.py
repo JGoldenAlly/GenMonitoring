@@ -69,7 +69,7 @@ from pymodbus.client import ModbusSerialClient, ModbusTcpClient
 # Constants
 # ---------------------------------------------------------------------------
 
-AGENT_VERSION = "1.0.0"
+AGENT_VERSION = "1.0.1"
 
 DEFAULT_API_BASE = "https://api.allyoperations.com"
 DEFAULT_CONFIG_PATH = "/etc/genmon/device.conf"
