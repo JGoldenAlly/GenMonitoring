@@ -299,7 +299,15 @@ grant_desktop_key_permissions() {
 create_directories() {
   log_step "Step 7: directories"
   install -d -o genmon -g genmon -m 0750 /opt/genmon
-  install -d -o root -g genmon -m 0750 /etc/genmon
+  # 0770, not 0750: the agent rewrites device.conf in place via a
+  # write-tmp-then-rename (os.replace) pattern for atomicity, which needs
+  # write+execute on the *directory* (to create device.conf.tmp and rename
+  # it over device.conf), not just on the file. Confirmed live: 0750 left
+  # the genmon group with read+execute only, so every save() crashed with
+  # PermissionError on device.conf.tmp. Still root:genmon-only (0770 grants
+  # nothing to "other"), so this stays as protected as before against any
+  # user outside that group.
+  install -d -o root -g genmon -m 0770 /etc/genmon
   install -d -o genmon -g genmon -m 0750 /var/log/genmon
   log_info "Created /opt/genmon, /etc/genmon, /var/log/genmon."
 }
