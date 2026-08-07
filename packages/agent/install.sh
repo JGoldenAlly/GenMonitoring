@@ -125,17 +125,29 @@ install_apt_dependencies() {
   # dnsmasq/iptables/chromium. These must all succeed -- gpiod provides
   # gpioset/gpioget, used by the commissioning step below.
   #
-  # No compiler toolchain (gcc/python3-dev/swig) is needed: GPIO access
-  # goes through gpiozero's built-in "native" pin factory (pure Python +
-  # ctypes against /dev/gpiochip*), not the lgpio PyPI package -- lgpio
-  # requires compiling a SWIG-generated C extension and linking it against
-  # liblgpio.so, a system library that isn't reliably available via apt
-  # across Raspberry Pi OS releases. Confirmed live in the field.
+  # python3-lgpio: gpiozero's LGPIOFactory pin factory backend, installed
+  # from Raspberry Pi OS's own apt repo (precompiled, with a working
+  # liblgpio.so) rather than pip installing the 'lgpio' PyPI package.
+  # Confirmed live that the PyPI package has no prebuilt wheel for this
+  # platform and its source build either fails outright (missing swig) or
+  # succeeds but then fails to link (missing liblgpio.so as a system
+  # library -- apt has no separate liblgpio-dev/liblgpio1 package to
+  # provide it standalone). gpiozero's other alternative, its built-in
+  # "native" pin factory, is ALSO not viable here: it depends on the
+  # legacy /sys/class/gpio sysfs interface, which Raspberry Pi OS Bookworm
+  # kernels have disabled (confirmed live: "OSError: [Errno 22] Invalid
+  # argument" from gpiozero/pins/native.py's export() call). apt's
+  # python3-lgpio is therefore the only backend this OS actually supports
+  # out of the box.
+  #
+  # No compiler toolchain (gcc/python3-dev/swig) is needed as a result --
+  # this is a precompiled package, not something pip builds from source.
   apt-get install -y --no-install-recommends \
     network-manager \
     modemmanager \
     python3-venv \
     python3-pip \
+    python3-lgpio \
     gpiod \
     curl \
     ca-certificates
@@ -319,7 +331,15 @@ create_directories() {
 create_venv() {
   log_step "Step 8: Python virtual environment"
   if [[ ! -x /opt/genmon/venv/bin/python3 ]]; then
-    "$PYTHON_BIN" -m venv /opt/genmon/venv
+    # --system-site-packages: lets the venv see the apt-installed
+    # python3-lgpio package (see install_apt_dependencies) -- that package
+    # ships a working precompiled liblgpio.so, unlike the PyPI 'lgpio'
+    # wheel, which has no prebuilt binary for this platform and fails at
+    # the link step when pip tries to build it from source. Everything
+    # this venv pip-installs (requirements.txt) still shadows any
+    # same-named system package, so this only adds visibility, not
+    # version conflicts.
+    "$PYTHON_BIN" -m venv --system-site-packages /opt/genmon/venv
     log_info "Created venv at /opt/genmon/venv"
   else
     log_info "venv already exists at /opt/genmon/venv"
@@ -521,7 +541,7 @@ WorkingDirectory=/opt/genmon
 ExecStart=/opt/genmon/venv/bin/python3 /opt/genmon/genmon_agent.py --config /etc/genmon/device.conf
 EnvironmentFile=-/etc/genmon/agent.env
 Environment=PYTHONUNBUFFERED=1
-Environment=GPIOZERO_PIN_FACTORY=native
+Environment=GPIOZERO_PIN_FACTORY=lgpio
 Restart=always
 RestartSec=10
 StandardOutput=journal

@@ -69,7 +69,7 @@ from pymodbus.client import ModbusSerialClient, ModbusTcpClient
 # Constants
 # ---------------------------------------------------------------------------
 
-AGENT_VERSION = "1.0.2"
+AGENT_VERSION = "1.0.3"
 
 DEFAULT_API_BASE = "https://api.allyoperations.com"
 DEFAULT_CONFIG_PATH = "/etc/genmon/device.conf"
@@ -571,24 +571,29 @@ class RegisterPoller:
 # notes before changing anything here.
 # ---------------------------------------------------------------------------
 
-def _configure_native_pin_factory() -> None:
-    """Force gpiozero onto its built-in native pin factory (not RPi.GPIO/
-    lgpio/pigpio). native talks to the kernel's /dev/gpiochip* character
-    devices directly via gpiozero's own ctypes bindings -- no external C
-    library or compiled extension required, unlike the lgpio pin factory
-    (which depends on liblgpio.so being installed as a system package; that
-    package is not reliably available via apt across Raspberry Pi OS
-    releases, and building the lgpio Python wheel from source to link
-    against it is fragile on field hardware). We force this explicitly at
-    GpioController construction time rather than trusting gpiozero's
-    auto-detection order, because a different backend could silently change
+def _configure_lgpio_pin_factory() -> None:
+    """Force gpiozero onto the lgpio pin factory (not RPi.GPIO/native/
+    pigpio). Confirmed live on real CM4 hardware that the other two
+    alternatives don't actually work on this OS: gpiozero's built-in
+    "native" pin factory depends on the legacy /sys/class/gpio sysfs
+    interface, which Raspberry Pi OS Bookworm's kernel has disabled
+    (fails with "OSError: [Errno 22] Invalid argument" on first pin
+    export); RPi.GPIO is deprecated and needs broader /dev/mem privilege.
+    lgpio talks to the kernel's modern /dev/gpiochip* character devices
+    instead. install.sh installs this via the apt package python3-lgpio
+    (Raspberry Pi OS's own precompiled build, with a working
+    liblgpio.so) rather than pip installing the 'lgpio' PyPI package,
+    which has no prebuilt wheel for this platform and fails to build/link
+    from source. We force this pin factory explicitly at GpioController
+    construction time rather than trusting gpiozero's auto-detection
+    order, because a different backend could silently change
     pull-resistor/debounce/edge behavior on this safety-critical I/O.
     Deferred to first use (not module import time) so the file remains
     import/syntax-checkable off real GPIO hardware (e.g. in CI)."""
     from gpiozero import Device
-    from gpiozero.pins.native import NativeFactory
+    from gpiozero.pins.lgpio import LGPIOFactory
 
-    Device.pin_factory = NativeFactory()
+    Device.pin_factory = LGPIOFactory()
 
 
 class GpioController:
@@ -623,7 +628,7 @@ class GpioController:
     """
 
     def __init__(self, config: ConfigStore):
-        _configure_native_pin_factory()
+        _configure_lgpio_pin_factory()
 
         self.config = config
         in1_pin = config.getint("gpio", "in1_pin", fallback=23)

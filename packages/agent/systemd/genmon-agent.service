@@ -34,10 +34,10 @@ ExecStart=/opt/genmon/venv/bin/python3 /opt/genmon/genmon_agent.py --config /etc
 EnvironmentFile=-/etc/genmon/agent.env
 Environment=PYTHONUNBUFFERED=1
 # Belt-and-suspenders alongside genmon_agent.py's own explicit
-# Device.pin_factory assignment: pins gpiozero to the native pin factory
+# Device.pin_factory assignment: pins gpiozero to the lgpio pin factory
 # before it ever runs its own auto-detection, in case some future code
 # path constructs a gpiozero device before GpioController.__init__ does.
-Environment=GPIOZERO_PIN_FACTORY=native
+Environment=GPIOZERO_PIN_FACTORY=lgpio
 
 Restart=always
 RestartSec=10
