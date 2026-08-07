@@ -29,4 +29,9 @@ COPY packages/agent/genmon_agent.py ./agent/genmon_agent.py
 
 EXPOSE 8000
 
-CMD ["uvicorn", "app.main:app", "--host", "0.0.0.0", "--port", "8000"]
+# Run migrations before starting the server, every time the container
+# starts -- `alembic upgrade head` is a no-op once already at head, so
+# this is safe on restarts. Without this, a fresh database has none of
+# the schema app/main.py's lifespan needs (confirmed live: it crashes on
+# "relation ... does not exist" trying to seed builtin templates).
+CMD ["sh", "-c", "alembic upgrade head && uvicorn app.main:app --host 0.0.0.0 --port 8000"]
