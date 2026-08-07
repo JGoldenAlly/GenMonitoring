@@ -69,7 +69,7 @@ from pymodbus.client import ModbusSerialClient, ModbusTcpClient
 # Constants
 # ---------------------------------------------------------------------------
 
-AGENT_VERSION = "1.0.1"
+AGENT_VERSION = "1.0.2"
 
 DEFAULT_API_BASE = "https://api.allyoperations.com"
 DEFAULT_CONFIG_PATH = "/etc/genmon/device.conf"
@@ -295,6 +295,12 @@ class ConfigStore:
             tmp = self.path.with_suffix(self.path.suffix + ".tmp")
             with open(tmp, "w") as fh:
                 self._parser.write(fh)
+            # install.sh writes the original device.conf 0640 root:genmon,
+            # but this tmp file is created fresh by the (non-root) genmon
+            # process, so its mode is whatever the process umask leaves --
+            # potentially world-readable. Pin it back to 0640 explicitly on
+            # every save, since this file holds a bearer token once claimed.
+            os.chmod(tmp, 0o640)
             os.replace(tmp, self.path)
 
     def get(self, section: str, key: str, fallback: str = "") -> str:
