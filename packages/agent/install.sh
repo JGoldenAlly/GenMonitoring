@@ -344,6 +344,25 @@ create_venv() {
   else
     log_info "venv already exists at /opt/genmon/venv"
   fi
+
+  # Force system-site-packages visibility even on a venv that already
+  # existed before this setting was introduced (or was otherwise created
+  # without it) -- confirmed live that a pre-existing venv from an earlier
+  # install run kept include-system-site-packages=false untouched by the
+  # block above, silently hiding the apt-installed python3-lgpio module
+  # from it despite "Step 8" reporting success. pyvenv.cfg is read live by
+  # the venv's Python on every interpreter start, not just baked in at
+  # creation time, so editing it in place here (no venv recreation) is
+  # sufficient to fix an existing install.
+  local pyvenv_cfg="/opt/genmon/venv/pyvenv.cfg"
+  if [[ -f "$pyvenv_cfg" ]]; then
+    if grep -q '^include-system-site-packages' "$pyvenv_cfg"; then
+      sed -i 's/^include-system-site-packages.*/include-system-site-packages = true/' "$pyvenv_cfg"
+    else
+      echo "include-system-site-packages = true" >> "$pyvenv_cfg"
+    fi
+    log_info "Confirmed venv has include-system-site-packages = true."
+  fi
 }
 
 # ---------------------------------------------------------------------------
