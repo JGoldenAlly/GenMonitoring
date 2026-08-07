@@ -45,7 +45,7 @@ class Settings(BaseSettings):
 
     # --- Misc / device provisioning ---
     AGENT_SCRIPT_PATH: str = "/app/agent/genmon_agent.py"
-    TARGET_AGENT_VERSION: str = "1.0.2"
+    TARGET_AGENT_VERSION: str = "1.0.3"
 
     # --- Command / session defaults ---
     DEFAULT_COMMAND_TTL_SECONDS: int = 300
