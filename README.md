@@ -293,7 +293,7 @@ bootstrap against it -- see step 1 above for the two-run flow).
 - If polling over RS-485/Modbus RTU, wire the generator controller's A/B
   (or D+/D-) lines to the board's onboard RS-485 terminal.
 
-### 1. Flash Raspberry Pi OS (Bookworm, 64-bit) to the CM4's eMMC/SD
+### 1. Flash Raspberry Pi OS (Trixie, 64-bit -- Bookworm also supported) to the CM4's eMMC/SD
 
 Use Raspberry Pi Imager as usual, enabling SSH and setting a hostname/user
 during imaging if you like (the install script will rename the host to the

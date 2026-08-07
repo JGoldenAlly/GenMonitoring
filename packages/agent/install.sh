@@ -1,8 +1,8 @@
 #!/usr/bin/env bash
 #
 # install.sh -- installs the GenMonitoring field agent on a Raspberry Pi CM4
-# (Waveshare "Compute Module 4 PoE 4G Board", Raspberry Pi OS Bookworm
-# 64-bit). Must be run as root, e.g.:
+# (Waveshare "Compute Module 4 PoE 4G Board", Raspberry Pi OS Trixie 64-bit --
+# Bookworm is also supported as an older base). Must be run as root, e.g.:
 #
 #   sudo ./install.sh
 #   sudo GENMON_API_BASE=https://api.allyoperations.com ./install.sh
@@ -80,18 +80,26 @@ check_preconditions() {
   fi
 
   if [[ "$(uname -m)" != "aarch64" ]]; then
-    log_error "Expected a 64-bit (aarch64) Raspberry Pi OS Bookworm userland, found: $(uname -m)."
+    log_error "Expected a 64-bit (aarch64) Raspberry Pi OS userland, found: $(uname -m)."
     exit 1
   fi
 
   if [[ -r /etc/os-release ]]; then
     # shellcheck disable=SC1091
     . /etc/os-release
-    if [[ "${VERSION_CODENAME:-}" != "bookworm" ]]; then
-      log_warn "Expected Raspberry Pi OS Bookworm (VERSION_CODENAME=bookworm), found '${VERSION_CODENAME:-unknown}'. Continuing, but this installer is only validated against Bookworm."
-    else
-      log_info "Detected OS: ${PRETTY_NAME:-Debian bookworm}"
-    fi
+    # Trixie is the primary target going forward (confirmed live: current
+    # field devices image as Trixie, e.g. python3-lgpio 0.2.2-1~rpt1+trixie,
+    # Python 3.13 by default, no 'raspi-gpio' package -- see
+    # install_gpio_pinmux_tool). Bookworm is kept as a tolerated older base
+    # since it's still a valid/supported Raspberry Pi OS release.
+    case "${VERSION_CODENAME:-}" in
+      trixie|bookworm)
+        log_info "Detected OS: ${PRETTY_NAME:-Debian ${VERSION_CODENAME}}"
+        ;;
+      *)
+        log_warn "Expected Raspberry Pi OS Trixie (VERSION_CODENAME=trixie) or Bookworm, found '${VERSION_CODENAME:-unknown}'. Continuing, but this installer is only validated against those two."
+        ;;
+    esac
   else
     log_warn "/etc/os-release not found/readable; cannot verify OS version. Continuing."
   fi
@@ -108,7 +116,7 @@ check_preconditions() {
   fi
 
   if [[ ! -d /boot/firmware ]]; then
-    log_error "/boot/firmware not found -- expected on Raspberry Pi OS Bookworm's boot partition layout. Aborting."
+    log_error "/boot/firmware not found -- expected on Raspberry Pi OS (Bookworm and newer)'s boot partition layout. Aborting."
     exit 1
   fi
 }
@@ -205,7 +213,7 @@ select_python() {
     fi
   done
   if [[ -z "$PYTHON_BIN" ]]; then
-    log_error "No Python 3.11+ interpreter found. Raspberry Pi OS Bookworm ships Python 3.11 as 'python3' by default -- check for a broken/older install."
+    log_error "No Python 3.11+ interpreter found. Raspberry Pi OS ships a new-enough Python as 'python3' by default (3.11 on Bookworm, 3.13 on Trixie) -- check for a broken/older install."
     exit 1
   fi
 }

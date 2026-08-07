@@ -3,11 +3,14 @@
 Uses pydantic-settings so values can be supplied via a `.env` file locally or
 real environment variables in production/containers.
 """
+import logging
 from functools import lru_cache
 from typing import List
 
 from pydantic import field_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
+
+logger = logging.getLogger(__name__)
 
 
 class Settings(BaseSettings):
@@ -61,6 +64,24 @@ class Settings(BaseSettings):
     def _parse_bool(cls, v):
         if isinstance(v, str):
             return v.strip().lower() in ("1", "true", "yes", "on")
+        return v
+
+    @field_validator("EMQX_API_URL", mode="after")
+    @classmethod
+    def _require_emqx_url_scheme(cls, v: str) -> str:
+        # httpx.AsyncClient(base_url=...) raises deep inside the request
+        # path -- not at startup -- if this is missing a scheme (e.g. a
+        # bare "10.20.1.63:18083", the natural thing to type after testing
+        # the EMQX API by hand with curl). Normalize it here instead of
+        # letting every device-claim attempt crash with a cryptic
+        # "UnsupportedProtocol" traceback that gives no hint what to fix.
+        if v and "://" not in v:
+            logger.warning(
+                "EMQX_API_URL=%r has no http(s):// scheme; assuming http://. "
+                "Set it explicitly (e.g. http://mqtt.allyoperations.com:18083) to silence this.",
+                v,
+            )
+            return f"http://{v}"
         return v
 
 
