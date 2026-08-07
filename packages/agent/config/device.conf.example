@@ -92,9 +92,24 @@ heartbeat_interval_seconds = 60
 
 [cellular]
 # APN for the M.2 SIMCom SIM7600G-H-M.2 modem's Verizon SIM, provisioned
-# manually per-SIM (no automated carrier API). Leave blank on Ethernet-only
-# units -- the agent detects modem absence and skips cellular bring-up
-# entirely without error. Example Verizon private/business APNs vary by
-# account; consult your Verizon IoT/M2M provisioning paperwork for the
-# exact value assigned to this SIM.
+# manually per-SIM (no automated carrier API).
+#
+# Leaving this BLANK is intentional and often correct, not a placeholder to
+# fill in before this works: the agent still brings up the GSM connection,
+# just without an explicit APN, letting the network/NetworkManager's carrier
+# database auto-assign one based on the SIM's subscriber profile -- the same
+# "auto APN" mechanism most commercial IoT gateways (e.g. Cradlepoint) rely
+# on. Try blank first.
+#
+# Only set an explicit value here if auto-assignment doesn't result in a
+# working data session. Likely candidates for Verizon M2M/IoT SIMs, in
+# rough order of likelihood: vzwiot (Verizon's standard IoT/M2M APN),
+# vzwinternet (consumer/postpaid -- only if these are regular data SIMs,
+# not a business IoT line), or a private/custom APN specific to this
+# Verizon Business account (check the SIM provisioning portal/paperwork,
+# e.g. Verizon ThingSpace, or ask your Verizon Business rep).
+#
+# On Ethernet-only units with no modem installed, this setting is simply
+# never consulted -- the agent detects modem absence and skips cellular
+# bring-up entirely.
 apn =

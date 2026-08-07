@@ -1069,39 +1069,77 @@ class CellularManager:
 
     def ensure_connection(self) -> None:
         """Idempotently create the 'genmon-wwan' NetworkManager GSM profile
-        if a modem is present and an APN is configured. Never raises -- all
-        failure modes are logged and swallowed so a modem/config problem
-        can't block the rest of the agent."""
+        if a modem is present. Never raises -- all failure modes are logged
+        and swallowed so a modem/config problem can't block the rest of the
+        agent.
+
+        APN handling: if [cellular] apn= is blank in device.conf, the
+        connection is created WITHOUT an apn parameter at all, rather than
+        skipping cellular entirely -- this lets ModemManager/NetworkManager
+        and the carrier network negotiate a default APN on their own
+        (via the network's subscriber-profile-based default-APN assignment,
+        and/or NetworkManager's built-in mobile-broadband-provider-info
+        carrier database keyed off the SIM's home MCC/MNC). This is the
+        same "auto APN" trick most commercial IoT gateways rely on, and is
+        worth trying before hardcoding a guessed APN string -- if it
+        doesn't result in a working data session, set an explicit APN in
+        [cellular] apn= instead (this method treats a config change from
+        blank -> a real value, or vice versa, as a different connection and
+        recreates it -- see _connection_exists/_apn_matches below)."""
         if not self.detect_modem():
             return
 
         apn = self.config.get("cellular", "apn", fallback="").strip()
-        if not apn:
-            logger.warning(
-                "Cellular modem detected but no APN configured in [cellular] apn= "
-                "(device.conf); skipping GSM profile creation. Verizon-provisions "
-                "the APN manually per SIM -- see config/device.conf.example."
-            )
-            return
 
         if self._connection_exists(self.GSM_CON_NAME):
-            return
+            if self._configured_apn_matches(apn):
+                return
+            logger.info(
+                "[cellular] apn= changed since '%s' was created -- recreating it.",
+                self.GSM_CON_NAME,
+            )
+            self._delete_connection(self.GSM_CON_NAME)
+
+        cmd = [
+            "sudo", "-n", self.NMCLI_PATH,
+            "connection", "add", "type", "gsm", "ifname", "*",
+            "con-name", self.GSM_CON_NAME,
+        ]
+        if apn:
+            cmd += ["apn", apn]
+        cmd += ["connection.autoconnect", "yes"]
 
         try:
-            subprocess.run(
-                [
-                    "sudo", "-n", self.NMCLI_PATH,
-                    "connection", "add", "type", "gsm", "ifname", "*",
-                    "con-name", self.GSM_CON_NAME, "apn", apn,
-                    "connection.autoconnect", "yes",
-                ],
-                check=True, capture_output=True, text=True, timeout=30,
+            subprocess.run(cmd, check=True, capture_output=True, text=True, timeout=30)
+            logger.info(
+                "Created NetworkManager GSM connection '%s' (APN=%s).",
+                self.GSM_CON_NAME,
+                apn or "<none -- network/carrier-database auto-assigned>",
             )
-            logger.info("Created NetworkManager GSM connection '%s' (APN=%s).", self.GSM_CON_NAME, apn)
         except subprocess.CalledProcessError as exc:
             logger.error("Failed to create GSM connection: %s", (exc.stderr or exc.stdout or exc).strip())
         except (FileNotFoundError, subprocess.TimeoutExpired) as exc:
             logger.error("nmcli unavailable/timed out creating GSM connection: %s", exc)
+
+    def _configured_apn_matches(self, apn: str) -> bool:
+        try:
+            result = subprocess.run(
+                [self.NMCLI_PATH, "-t", "-f", "GSM.APN", "connection", "show", self.GSM_CON_NAME],
+                capture_output=True, text=True, timeout=10,
+            )
+            current = result.stdout.strip().split(":", 1)[-1].strip() if result.stdout else ""
+            return current == apn
+        except (subprocess.TimeoutExpired, FileNotFoundError, OSError):
+            return True  # can't tell -- don't recreate on a transient nmcli hiccup
+
+    def _delete_connection(self, con_name: str) -> None:
+        try:
+            subprocess.run(
+                ["sudo", "-n", self.NMCLI_PATH, "connection", "delete", con_name],
+                capture_output=True, text=True, timeout=10,
+            )
+        except (subprocess.TimeoutExpired, FileNotFoundError, OSError) as exc:
+            logger.warning("Could not delete stale GSM connection '%s': %s", con_name, exc)
 
     def _connection_exists(self, con_name: str) -> bool:
         try:

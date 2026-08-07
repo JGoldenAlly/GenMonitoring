@@ -343,8 +343,10 @@ Edit `/etc/genmon/device.conf` if needed:
 api_base_url = https://api.allyoperations.com
 
 [cellular]
-apn = <your Verizon-provisioned APN>
+apn =
 ```
+
+Leave `apn` **blank** first -- the agent still brings up the cellular connection without one, letting the network/NetworkManager's carrier database auto-assign the correct APN (the same trick Cradlepoint and most commercial IoT gateways rely on). Only set an explicit value if that doesn't result in a working data session; likely candidates for a Verizon M2M/IoT SIM are `vzwiot` or a private APN specific to your Verizon Business account (check your SIM provisioning portal/paperwork, e.g. ThingSpace).
 
 Restart the agent: `sudo systemctl restart genmon-agent`.
 

@@ -476,8 +476,10 @@ print(c.get("cellular", "apn", fallback=""))
 PYEOF
 )"
     if [[ -z "${apn// }" ]]; then
-      log_warn "No APN set yet in [cellular] apn= -- cellular bring-up will be skipped by the agent"
-      log_warn "until you set it (Verizon-provisioned per SIM; there is no automated carrier API)."
+      log_info "[cellular] apn= is blank -- the agent will still bring up the GSM connection, just"
+      log_info "without an explicit APN, letting the network/carrier database auto-assign one (the"
+      log_info "same 'auto APN' trick most commercial IoT gateways use). Try this first; only set an"
+      log_info "explicit APN in device.conf if that doesn't result in a working data session."
     fi
   else
     log_info "No cellular modem detected -- this unit is Ethernet-only. No action needed; the agent"
