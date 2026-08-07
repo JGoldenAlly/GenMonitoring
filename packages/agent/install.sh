@@ -125,19 +125,17 @@ install_apt_dependencies() {
   # dnsmasq/iptables/chromium. These must all succeed -- gpiod provides
   # gpioset/gpioget, used by the commissioning step below.
   #
-  # gcc/python3-dev/swig: confirmed live that the 'lgpio' PyPI package (the
-  # gpiozero pin-factory backend requirements.txt installs) has no
-  # prebuilt wheel for this platform and falls back to compiling its SWIG-
-  # generated C extension from source -- without these, pip install fails
-  # with "command 'swig' failed: No such file or directory" at Step 10.
+  # No compiler toolchain (gcc/python3-dev/swig) is needed: GPIO access
+  # goes through gpiozero's built-in "native" pin factory (pure Python +
+  # ctypes against /dev/gpiochip*), not the lgpio PyPI package -- lgpio
+  # requires compiling a SWIG-generated C extension and linking it against
+  # liblgpio.so, a system library that isn't reliably available via apt
+  # across Raspberry Pi OS releases. Confirmed live in the field.
   apt-get install -y --no-install-recommends \
     network-manager \
     modemmanager \
     python3-venv \
     python3-pip \
-    python3-dev \
-    gcc \
-    swig \
     gpiod \
     curl \
     ca-certificates
@@ -515,6 +513,7 @@ WorkingDirectory=/opt/genmon
 ExecStart=/opt/genmon/venv/bin/python3 /opt/genmon/genmon_agent.py --config /etc/genmon/device.conf
 EnvironmentFile=-/etc/genmon/agent.env
 Environment=PYTHONUNBUFFERED=1
+Environment=GPIOZERO_PIN_FACTORY=native
 Restart=always
 RestartSec=10
 StandardOutput=journal

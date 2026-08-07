@@ -19,15 +19,12 @@ pyserial==3.5
 # signatures directly.
 paho-mqtt==1.6.1
 
-# GPIO control for IN1 (BCM GPIO23) / OUT1 (BCM GPIO6).
+# GPIO control for IN1 (BCM GPIO23) / OUT1 (BCM GPIO6). gpiozero's built-in
+# "native" pin factory is used (see genmon_agent.py's
+# _configure_native_pin_factory) -- it talks to /dev/gpiochip* directly via
+# gpiozero's own ctypes bindings, so no separate pin-factory package (lgpio,
+# RPi.GPIO, pigpio) is required here.
 gpiozero==2.0.1
-
-# lgpio pin factory backend for gpiozero -- required so GPIO access goes
-# through /dev/gpiochip* rather than the legacy /dev/mem path. The agent
-# explicitly forces this pin factory (see genmon_agent.py's
-# _configure_lgpio_pin_factory) rather than trusting gpiozero's
-# auto-detection order.
-lgpio==0.2.2.0
 
 # HTTP client for the GenMonitoring API (pre-register/config/heartbeat/
 # scan-results/submit-logs/agent-download).
