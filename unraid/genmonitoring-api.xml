@@ -15,7 +15,7 @@
   <DateInstalled></DateInstalled>
   <DonateLink></DonateLink>
   <Config Type="Port" Name="API Port" Target="8000" Default="8000" Mode="tcp" Description="REST API + gated /docs">8000</Config>
-  <Config Type="Variable" Name="DATABASE_URL" Target="DATABASE_URL" Default="postgresql+asyncpg://genmon:genmon@postgres:5432/genmonitoring" Mode="" Description="SQLAlchemy async connection string for Postgres/TimescaleDB" Display="always" Required="true" Mask="true">postgresql+asyncpg://genmon:genmon@postgres:5432/genmonitoring</Config>
+  <Config Type="Variable" Name="DATABASE_URL" Target="DATABASE_URL" Default="postgresql+asyncpg://genmon:genmon@postgres:5432/genmonitoring" Mode="" Description="SQLAlchemy async connection string for Postgres/TimescaleDB" Display="always" Required="true" Mask="false">postgresql+asyncpg://genmon:genmon@postgres:5432/genmonitoring</Config>
   <Config Type="Variable" Name="JWT_SECRET" Target="JWT_SECRET" Default="" Mode="" Description="Random secret for signing JWTs -- generate with `openssl rand -hex 32`" Display="always" Required="true" Mask="true"></Config>
   <Config Type="Variable" Name="JWT_ALGORITHM" Target="JWT_ALGORITHM" Default="HS256" Mode="" Description="JWT signing algorithm" Display="advanced" Required="false" Mask="false">HS256</Config>
   <Config Type="Variable" Name="JWT_ACCESS_TOKEN_EXPIRE_MINUTES" Target="JWT_ACCESS_TOKEN_EXPIRE_MINUTES" Default="30" Mode="" Description="Access token lifetime (minutes)" Display="advanced" Required="false" Mask="false">30</Config>

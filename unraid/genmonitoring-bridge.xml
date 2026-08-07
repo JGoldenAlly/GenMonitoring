@@ -14,7 +14,7 @@
   <ExtraParams>--restart=unless-stopped</ExtraParams>
   <DateInstalled></DateInstalled>
   <DonateLink></DonateLink>
-  <Config Type="Variable" Name="DATABASE_URL" Target="DATABASE_URL" Default="postgresql+asyncpg://genmon:genmon@postgres:5432/genmonitoring" Mode="" Description="Postgres/TimescaleDB connection string" Display="always" Required="true" Mask="true">postgresql+asyncpg://genmon:genmon@postgres:5432/genmonitoring</Config>
+  <Config Type="Variable" Name="DATABASE_URL" Target="DATABASE_URL" Default="postgresql+asyncpg://genmon:genmon@postgres:5432/genmonitoring" Mode="" Description="Postgres/TimescaleDB connection string" Display="always" Required="true" Mask="false">postgresql+asyncpg://genmon:genmon@postgres:5432/genmonitoring</Config>
   <Config Type="Variable" Name="MQTT_HOST" Target="MQTT_HOST" Default="mqtt.allyoperations.com" Mode="" Description="EMQX broker hostname/IP" Display="always" Required="true" Mask="false">mqtt.allyoperations.com</Config>
   <Config Type="Variable" Name="MQTT_PORT" Target="MQTT_PORT" Default="1883" Mode="" Description="EMQX broker MQTT port" Display="always" Required="true" Mask="false">1883</Config>
   <Config Type="Variable" Name="MQTT_TLS" Target="MQTT_TLS" Default="false" Mode="" Description="Use TLS for the broker connection -- leave false for a plaintext 1883 broker reachable only over a trusted/private network path" Display="advanced" Required="false" Mask="false">false</Config>
