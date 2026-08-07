@@ -565,20 +565,24 @@ class RegisterPoller:
 # notes before changing anything here.
 # ---------------------------------------------------------------------------
 
-def _configure_lgpio_pin_factory() -> None:
-    """Force gpiozero onto the lgpio pin factory (not RPi.GPIO/native/
-    pigpio). lgpio talks to the kernel's /dev/gpiochip* character devices,
-    which is what Raspberry Pi OS Bookworm expects and what this design
-    requires on CM4. We force this explicitly at GpioController construction
-    time rather than trusting gpiozero's auto-detection order, because a
-    different backend could silently change pull-resistor/debounce/edge
-    behavior on this safety-critical I/O. Deferred to first use (not module
-    import time) so the file remains import/syntax-checkable off real
-    GPIO hardware (e.g. in CI)."""
+def _configure_native_pin_factory() -> None:
+    """Force gpiozero onto its built-in native pin factory (not RPi.GPIO/
+    lgpio/pigpio). native talks to the kernel's /dev/gpiochip* character
+    devices directly via gpiozero's own ctypes bindings -- no external C
+    library or compiled extension required, unlike the lgpio pin factory
+    (which depends on liblgpio.so being installed as a system package; that
+    package is not reliably available via apt across Raspberry Pi OS
+    releases, and building the lgpio Python wheel from source to link
+    against it is fragile on field hardware). We force this explicitly at
+    GpioController construction time rather than trusting gpiozero's
+    auto-detection order, because a different backend could silently change
+    pull-resistor/debounce/edge behavior on this safety-critical I/O.
+    Deferred to first use (not module import time) so the file remains
+    import/syntax-checkable off real GPIO hardware (e.g. in CI)."""
     from gpiozero import Device
-    from gpiozero.pins.lgpio import LGPIOFactory
+    from gpiozero.pins.native import NativeFactory
 
-    Device.pin_factory = LGPIOFactory()
+    Device.pin_factory = NativeFactory()
 
 
 class GpioController:
@@ -613,7 +617,7 @@ class GpioController:
     """
 
     def __init__(self, config: ConfigStore):
-        _configure_lgpio_pin_factory()
+        _configure_native_pin_factory()
 
         self.config = config
         in1_pin = config.getint("gpio", "in1_pin", fallback=23)
