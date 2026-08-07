@@ -352,8 +352,13 @@ Restart the agent: `sudo systemctl restart genmon-agent`.
 
 ### 6. Claim the device in the portal
 
-The agent prints its device key (`GM-XXXX-XXXX`) to the console/journal on
-first boot (`journalctl -u genmon-agent -f`). In the portal, go to
+The agent logs its device key (`GM-XXXX-XXXX`) on first boot
+(`journalctl -u genmon-agent -f`). On a Raspberry Pi OS **Desktop** install,
+it also writes it to `~/Desktop/genmon_device_key.txt` for every local user
+on every startup -- handy if you're working at the machine with a monitor
+attached rather than SSHing in (install.sh grants the unprivileged
+`genmon` service user access to do this; on a headless/Lite install with
+no desktop user this is just a silent no-op). In the portal, go to
 **Devices**, find the unclaimed device by that key, and claim it.
 
 ### 7. Add the generator

@@ -1455,6 +1455,7 @@ class GenMonAgent:
             self.config.save()
 
         logger.info("GenMon agent starting: device_key=%s agent_version=%s", self.device_key, AGENT_VERSION)
+        self._write_device_key_desktop_file()
 
     def _maybe_set_hostname_once(self, device_key: str) -> None:
         """Best-effort, one-time-only hostname set on first-ever bootstrap
@@ -1473,6 +1474,45 @@ class GenMonAgent:
             logger.info("Set system hostname to '%s' on first bootstrap.", hostname)
         except Exception as exc:
             logger.info("Could not set hostname on first bootstrap (non-fatal): %s", exc)
+
+    def _write_device_key_desktop_file(self) -> None:
+        """Best-effort convenience for Raspberry Pi OS Desktop installs: drop
+        the device key into every local user's Desktop folder, so a
+        technician working at the machine with a monitor/keyboard attached
+        can read it without SSHing in or checking journalctl. Re-written on
+        every startup (cheap, idempotent) rather than once-only, so it
+        self-heals if deleted and follows the device if re-imaged onto a
+        different desktop user. Pure convenience -- never raises, and a
+        headless/Lite install with no /home/*/Desktop directories (or where
+        the unprivileged genmon user lacks write access to one) just skips
+        silently. See install.sh's desktop-key-file step for the one-time
+        permission grant this relies on (genmon needs write access to
+        someone else's home directory, which it doesn't have by default)."""
+        try:
+            home_root = Path("/home")
+            if not home_root.is_dir():
+                return
+            for home in home_root.iterdir():
+                if not home.is_dir():
+                    continue
+                desktop = home / "Desktop"
+                try:
+                    desktop.mkdir(exist_ok=True)
+                    target = desktop / "genmon_device_key.txt"
+                    target.write_text(
+                        "GenMonitoring device key\n"
+                        "=========================\n"
+                        f"{self.device_key}\n\n"
+                        f"CPU serial: {self.cpu_serial}\n"
+                        f"Written: {datetime.now(timezone.utc).isoformat()}\n\n"
+                        "Log into the GenMonitoring portal and claim this device using "
+                        "the key above. This file is rewritten on every agent startup; "
+                        "safe to delete, it'll reappear on the next reboot/restart.\n"
+                    )
+                except OSError:
+                    continue  # not writable / no desktop support here -- skip silently
+        except OSError:
+            pass
 
     def _apply_env_overrides(self) -> None:
         api_base = os.environ.get("GENMON_API_BASE")
