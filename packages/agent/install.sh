@@ -124,11 +124,20 @@ install_apt_dependencies() {
   # Deliberately minimal set for a headless field agent: no xvfb/vnc/
   # dnsmasq/iptables/chromium. These must all succeed -- gpiod provides
   # gpioset/gpioget, used by the commissioning step below.
+  #
+  # gcc/python3-dev/swig: confirmed live that the 'lgpio' PyPI package (the
+  # gpiozero pin-factory backend requirements.txt installs) has no
+  # prebuilt wheel for this platform and falls back to compiling its SWIG-
+  # generated C extension from source -- without these, pip install fails
+  # with "command 'swig' failed: No such file or directory" at Step 10.
   apt-get install -y --no-install-recommends \
     network-manager \
     modemmanager \
     python3-venv \
     python3-pip \
+    python3-dev \
+    gcc \
+    swig \
     gpiod \
     curl \
     ca-certificates
