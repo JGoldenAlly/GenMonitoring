@@ -343,15 +343,22 @@ Edit `/etc/genmon/device.conf` if needed:
 api_base_url = https://api.allyoperations.com
 
 [cellular]
-apn = <your Verizon-provisioned APN>
+apn =
 ```
+
+Leave `apn` **blank** first -- the agent still brings up the cellular connection without one, letting the network/NetworkManager's carrier database auto-assign the correct APN (the same trick Cradlepoint and most commercial IoT gateways rely on). Only set an explicit value if that doesn't result in a working data session; likely candidates for a Verizon M2M/IoT SIM are `vzwiot` or a private APN specific to your Verizon Business account (check your SIM provisioning portal/paperwork, e.g. ThingSpace).
 
 Restart the agent: `sudo systemctl restart genmon-agent`.
 
 ### 6. Claim the device in the portal
 
-The agent prints its device key (`GM-XXXX-XXXX`) to the console/journal on
-first boot (`journalctl -u genmon-agent -f`). In the portal, go to
+The agent logs its device key (`GM-XXXX-XXXX`) on first boot
+(`journalctl -u genmon-agent -f`). On a Raspberry Pi OS **Desktop** install,
+it also writes it to `~/Desktop/genmon_device_key.txt` for every local user
+on every startup -- handy if you're working at the machine with a monitor
+attached rather than SSHing in (install.sh grants the unprivileged
+`genmon` service user access to do this; on a headless/Lite install with
+no desktop user this is just a silent no-op). In the portal, go to
 **Devices**, find the unclaimed device by that key, and claim it.
 
 ### 7. Add the generator

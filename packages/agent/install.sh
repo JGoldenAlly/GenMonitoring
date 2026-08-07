@@ -208,11 +208,45 @@ create_system_user() {
 }
 
 # ---------------------------------------------------------------------------
-# Step 6: directories
+# Step 6: desktop device-key file permissions (Raspberry Pi OS Desktop only)
+# ---------------------------------------------------------------------------
+
+grant_desktop_key_permissions() {
+  log_step "Step 6: desktop device-key file permissions"
+  # genmon_agent.py writes the device key to every local user's ~/Desktop
+  # (genmon_device_key.txt) on every startup, as a convenience for
+  # technicians working at the machine with a monitor/keyboard attached
+  # instead of SSHing in. The unprivileged 'genmon' user has no write access
+  # to another user's home directory by default -- grant it here, once, by
+  # joining that user's primary group and making their Desktop folder
+  # group-writable. Low-sensitivity data (just a device identifier), so a
+  # group-write grant is an acceptable trade for not needing broader
+  # permissions or an extra ACL package.
+  local found=0 home user group
+  for home in /home/*/; do
+    [[ -d "$home" ]] || continue
+    user="$(basename "$home")"
+    # Skip anything that isn't a real login account (defensive; genmon
+    # itself has no /home entry since it's --no-create-home).
+    id -u "$user" >/dev/null 2>&1 || continue
+    found=1
+    group="$(id -gn "$user")"
+    install -d -o "$user" -g "$group" -m 0770 "${home}Desktop"
+    usermod -aG "$group" genmon
+    log_info "Granted 'genmon' write access to ${home}Desktop (via group '${group}')."
+  done
+  if [[ "$found" -eq 0 ]]; then
+    log_info "No /home/* user directories found (headless/Lite install) -- nothing to grant. The"
+    log_info "agent's desktop-key-file write is a no-op here, which is expected and harmless."
+  fi
+}
+
+# ---------------------------------------------------------------------------
+# Step 7: directories
 # ---------------------------------------------------------------------------
 
 create_directories() {
-  log_step "Step 6: directories"
+  log_step "Step 7: directories"
   install -d -o genmon -g genmon -m 0750 /opt/genmon
   install -d -o root -g genmon -m 0750 /etc/genmon
   install -d -o genmon -g genmon -m 0750 /var/log/genmon
@@ -220,11 +254,11 @@ create_directories() {
 }
 
 # ---------------------------------------------------------------------------
-# Step 7: Python virtual environment
+# Step 8: Python virtual environment
 # ---------------------------------------------------------------------------
 
 create_venv() {
-  log_step "Step 7: Python virtual environment"
+  log_step "Step 8: Python virtual environment"
   if [[ ! -x /opt/genmon/venv/bin/python3 ]]; then
     "$PYTHON_BIN" -m venv /opt/genmon/venv
     log_info "Created venv at /opt/genmon/venv"
@@ -234,11 +268,11 @@ create_venv() {
 }
 
 # ---------------------------------------------------------------------------
-# Step 8: fetch genmon_agent.py + requirements.txt from a PUBLIC source
+# Step 9: fetch genmon_agent.py + requirements.txt from a PUBLIC source
 # ---------------------------------------------------------------------------
 
 fetch_agent_files() {
-  log_step "Step 8: fetch genmon_agent.py + requirements.txt"
+  log_step "Step 9: fetch genmon_agent.py + requirements.txt"
 
   local tmp_dir
   tmp_dir="$(mktemp -d)"
@@ -294,11 +328,11 @@ fetch_agent_files() {
 }
 
 # ---------------------------------------------------------------------------
-# Step 9: pip install
+# Step 10: pip install
 # ---------------------------------------------------------------------------
 
 pip_install_dependencies() {
-  log_step "Step 9: pip install (into /opt/genmon/venv)"
+  log_step "Step 10: pip install (into /opt/genmon/venv)"
   /opt/genmon/venv/bin/pip install --upgrade pip --quiet
   /opt/genmon/venv/bin/pip install -r /opt/genmon/requirements.txt --quiet
   chown -R genmon:genmon /opt/genmon
@@ -306,7 +340,7 @@ pip_install_dependencies() {
 }
 
 # ---------------------------------------------------------------------------
-# Step 10: /etc/genmon/device.conf (never overwritten if already present)
+# Step 11: /etc/genmon/device.conf (never overwritten if already present)
 # ---------------------------------------------------------------------------
 
 write_embedded_device_conf_template() {
@@ -342,7 +376,7 @@ CONF_EOF
 }
 
 write_device_conf() {
-  log_step "Step 10: /etc/genmon/device.conf"
+  log_step "Step 11: /etc/genmon/device.conf"
   if [[ -f /etc/genmon/device.conf ]]; then
     log_info "/etc/genmon/device.conf already exists -- leaving it untouched (never overwritten)."
     return
@@ -368,11 +402,11 @@ write_device_conf() {
 }
 
 # ---------------------------------------------------------------------------
-# Step 11: sudoers drop-in (validated with visudo -cf before activating)
+# Step 12: sudoers drop-in (validated with visudo -cf before activating)
 # ---------------------------------------------------------------------------
 
 install_sudoers() {
-  log_step "Step 11: sudoers drop-in for 'genmon'"
+  log_step "Step 12: sudoers drop-in for 'genmon'"
 
   local tmp_sudoers
   tmp_sudoers="$(mktemp)"
@@ -408,7 +442,7 @@ SUDOERS_EOF
 }
 
 # ---------------------------------------------------------------------------
-# Step 12: systemd service
+# Step 13: systemd service
 # ---------------------------------------------------------------------------
 
 write_embedded_systemd_unit() {
@@ -441,7 +475,7 @@ UNIT_EOF
 }
 
 install_systemd_service() {
-  log_step "Step 12: systemd service"
+  log_step "Step 13: systemd service"
   local src="${SCRIPT_DIR}/systemd/genmon-agent.service"
   if [[ -f "$src" ]]; then
     install -o root -g root -m 0644 "$src" /etc/systemd/system/genmon-agent.service
@@ -458,11 +492,11 @@ install_systemd_service() {
 }
 
 # ---------------------------------------------------------------------------
-# Step 13: cellular bring-up if a modem is detected, clean skip if not
+# Step 14: cellular bring-up if a modem is detected, clean skip if not
 # ---------------------------------------------------------------------------
 
 cellular_bringup_check() {
-  log_step "Step 13: cellular modem detection"
+  log_step "Step 14: cellular modem detection"
   if command -v mmcli >/dev/null 2>&1 && mmcli -L 2>/dev/null | grep -q '/Modem/'; then
     log_info "Cellular modem detected via 'mmcli -L'."
     log_info "The agent creates/manages the 'genmon-wwan' NetworkManager GSM profile automatically"
@@ -476,8 +510,10 @@ print(c.get("cellular", "apn", fallback=""))
 PYEOF
 )"
     if [[ -z "${apn// }" ]]; then
-      log_warn "No APN set yet in [cellular] apn= -- cellular bring-up will be skipped by the agent"
-      log_warn "until you set it (Verizon-provisioned per SIM; there is no automated carrier API)."
+      log_info "[cellular] apn= is blank -- the agent will still bring up the GSM connection, just"
+      log_info "without an explicit APN, letting the network/carrier database auto-assign one (the"
+      log_info "same 'auto APN' trick most commercial IoT gateways use). Try this first; only set an"
+      log_info "explicit APN in device.conf if that doesn't result in a working data session."
     fi
   else
     log_info "No cellular modem detected -- this unit is Ethernet-only. No action needed; the agent"
@@ -486,12 +522,12 @@ PYEOF
 }
 
 # ---------------------------------------------------------------------------
-# Step 14: commissioning -- verify the IN1/OUT1 pin mapping against real
+# Step 15: commissioning -- verify the IN1/OUT1 pin mapping against real
 # hardware before ANYONE wires OUT1 to a live generator start circuit.
 # ---------------------------------------------------------------------------
 
 commissioning_checks() {
-  log_step "Step 14: GPIO commissioning checks"
+  log_step "Step 15: GPIO commissioning checks"
 
   if [[ -e /dev/ttyAMA5 ]]; then
     log_info "/dev/ttyAMA5 exists -- the RS-485 UART overlay is active."
@@ -617,6 +653,7 @@ main() {
   select_python
   configure_boot_overlays
   create_system_user
+  grant_desktop_key_permissions
   create_directories
   create_venv
   fetch_agent_files

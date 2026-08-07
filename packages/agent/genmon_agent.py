@@ -1069,39 +1069,77 @@ class CellularManager:
 
     def ensure_connection(self) -> None:
         """Idempotently create the 'genmon-wwan' NetworkManager GSM profile
-        if a modem is present and an APN is configured. Never raises -- all
-        failure modes are logged and swallowed so a modem/config problem
-        can't block the rest of the agent."""
+        if a modem is present. Never raises -- all failure modes are logged
+        and swallowed so a modem/config problem can't block the rest of the
+        agent.
+
+        APN handling: if [cellular] apn= is blank in device.conf, the
+        connection is created WITHOUT an apn parameter at all, rather than
+        skipping cellular entirely -- this lets ModemManager/NetworkManager
+        and the carrier network negotiate a default APN on their own
+        (via the network's subscriber-profile-based default-APN assignment,
+        and/or NetworkManager's built-in mobile-broadband-provider-info
+        carrier database keyed off the SIM's home MCC/MNC). This is the
+        same "auto APN" trick most commercial IoT gateways rely on, and is
+        worth trying before hardcoding a guessed APN string -- if it
+        doesn't result in a working data session, set an explicit APN in
+        [cellular] apn= instead (this method treats a config change from
+        blank -> a real value, or vice versa, as a different connection and
+        recreates it -- see _connection_exists/_apn_matches below)."""
         if not self.detect_modem():
             return
 
         apn = self.config.get("cellular", "apn", fallback="").strip()
-        if not apn:
-            logger.warning(
-                "Cellular modem detected but no APN configured in [cellular] apn= "
-                "(device.conf); skipping GSM profile creation. Verizon-provisions "
-                "the APN manually per SIM -- see config/device.conf.example."
-            )
-            return
 
         if self._connection_exists(self.GSM_CON_NAME):
-            return
+            if self._configured_apn_matches(apn):
+                return
+            logger.info(
+                "[cellular] apn= changed since '%s' was created -- recreating it.",
+                self.GSM_CON_NAME,
+            )
+            self._delete_connection(self.GSM_CON_NAME)
+
+        cmd = [
+            "sudo", "-n", self.NMCLI_PATH,
+            "connection", "add", "type", "gsm", "ifname", "*",
+            "con-name", self.GSM_CON_NAME,
+        ]
+        if apn:
+            cmd += ["apn", apn]
+        cmd += ["connection.autoconnect", "yes"]
 
         try:
-            subprocess.run(
-                [
-                    "sudo", "-n", self.NMCLI_PATH,
-                    "connection", "add", "type", "gsm", "ifname", "*",
-                    "con-name", self.GSM_CON_NAME, "apn", apn,
-                    "connection.autoconnect", "yes",
-                ],
-                check=True, capture_output=True, text=True, timeout=30,
+            subprocess.run(cmd, check=True, capture_output=True, text=True, timeout=30)
+            logger.info(
+                "Created NetworkManager GSM connection '%s' (APN=%s).",
+                self.GSM_CON_NAME,
+                apn or "<none -- network/carrier-database auto-assigned>",
             )
-            logger.info("Created NetworkManager GSM connection '%s' (APN=%s).", self.GSM_CON_NAME, apn)
         except subprocess.CalledProcessError as exc:
             logger.error("Failed to create GSM connection: %s", (exc.stderr or exc.stdout or exc).strip())
         except (FileNotFoundError, subprocess.TimeoutExpired) as exc:
             logger.error("nmcli unavailable/timed out creating GSM connection: %s", exc)
+
+    def _configured_apn_matches(self, apn: str) -> bool:
+        try:
+            result = subprocess.run(
+                [self.NMCLI_PATH, "-t", "-f", "GSM.APN", "connection", "show", self.GSM_CON_NAME],
+                capture_output=True, text=True, timeout=10,
+            )
+            current = result.stdout.strip().split(":", 1)[-1].strip() if result.stdout else ""
+            return current == apn
+        except (subprocess.TimeoutExpired, FileNotFoundError, OSError):
+            return True  # can't tell -- don't recreate on a transient nmcli hiccup
+
+    def _delete_connection(self, con_name: str) -> None:
+        try:
+            subprocess.run(
+                ["sudo", "-n", self.NMCLI_PATH, "connection", "delete", con_name],
+                capture_output=True, text=True, timeout=10,
+            )
+        except (subprocess.TimeoutExpired, FileNotFoundError, OSError) as exc:
+            logger.warning("Could not delete stale GSM connection '%s': %s", con_name, exc)
 
     def _connection_exists(self, con_name: str) -> bool:
         try:
@@ -1417,6 +1455,7 @@ class GenMonAgent:
             self.config.save()
 
         logger.info("GenMon agent starting: device_key=%s agent_version=%s", self.device_key, AGENT_VERSION)
+        self._write_device_key_desktop_file()
 
     def _maybe_set_hostname_once(self, device_key: str) -> None:
         """Best-effort, one-time-only hostname set on first-ever bootstrap
@@ -1435,6 +1474,45 @@ class GenMonAgent:
             logger.info("Set system hostname to '%s' on first bootstrap.", hostname)
         except Exception as exc:
             logger.info("Could not set hostname on first bootstrap (non-fatal): %s", exc)
+
+    def _write_device_key_desktop_file(self) -> None:
+        """Best-effort convenience for Raspberry Pi OS Desktop installs: drop
+        the device key into every local user's Desktop folder, so a
+        technician working at the machine with a monitor/keyboard attached
+        can read it without SSHing in or checking journalctl. Re-written on
+        every startup (cheap, idempotent) rather than once-only, so it
+        self-heals if deleted and follows the device if re-imaged onto a
+        different desktop user. Pure convenience -- never raises, and a
+        headless/Lite install with no /home/*/Desktop directories (or where
+        the unprivileged genmon user lacks write access to one) just skips
+        silently. See install.sh's desktop-key-file step for the one-time
+        permission grant this relies on (genmon needs write access to
+        someone else's home directory, which it doesn't have by default)."""
+        try:
+            home_root = Path("/home")
+            if not home_root.is_dir():
+                return
+            for home in home_root.iterdir():
+                if not home.is_dir():
+                    continue
+                desktop = home / "Desktop"
+                try:
+                    desktop.mkdir(exist_ok=True)
+                    target = desktop / "genmon_device_key.txt"
+                    target.write_text(
+                        "GenMonitoring device key\n"
+                        "=========================\n"
+                        f"{self.device_key}\n\n"
+                        f"CPU serial: {self.cpu_serial}\n"
+                        f"Written: {datetime.now(timezone.utc).isoformat()}\n\n"
+                        "Log into the GenMonitoring portal and claim this device using "
+                        "the key above. This file is rewritten on every agent startup; "
+                        "safe to delete, it'll reappear on the next reboot/restart.\n"
+                    )
+                except OSError:
+                    continue  # not writable / no desktop support here -- skip silently
+        except OSError:
+            pass
 
     def _apply_env_overrides(self) -> None:
         api_base = os.environ.get("GENMON_API_BASE")
